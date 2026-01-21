@@ -34,8 +34,9 @@
     \begin{itemize}
         \item \textit{SimMIM}, as with prior MIM frameworks, is trained on ImageNet-1K.
         \item However, radiographs are significantly less diverse than ImageNet images.
-        \item Furthermore, features of a positive observation may be strongly localized in specific image regions, but labels are ignored in pre-training. So, the model may primarily learn global anatomical structure rather than pathology-relevant representations.
-        \item The core challenge is therefore determining whether SimMIM can perform self-supervised representation learning of radiographs and whether these representations can be efficiently fine-tuned to accurately classify clinical observations.
+        \item Furthermore, features of a positive observation may be strongly localized in specific image regions, but labels are ignored in pre-training.
+        \item So, the model may primarily learn global anatomical structure rather than pathology-relevant representations.
+        \item Therefore, the core challenge is determining whether SimMIM can perform self-supervised representation learning of radiographs that can be efficiently fine-tuned to classify clinical observations.
     \end{itemize}
 \end{itemize}
 
