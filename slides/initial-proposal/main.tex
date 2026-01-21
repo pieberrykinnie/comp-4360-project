@@ -25,8 +25,19 @@
         \item Prior frameworks for MIM required complex designs.
         \item SimMIM yields competitive/SOTA benchmarks while being simpler.
     \end{itemize}
-    \item New dataset:
+    \item New dataset: \href{https://www.tensorflow.org/datasets/catalog/chexpert}{\underline{CheXpert} \faExternalLink}
+    \begin{itemize}
+        \item 224,316 chest radiographs of 65,240 patients.
+        \item 14 observations per image, each positive, negative, or uncertain.
+    \end{itemize}
     \item Core technical challenge:
+    \begin{itemize}
+        \item \textit{SimMIM}, as with prior MIM frameworks, is trained on ImageNet-1K.
+        \item However, radiographs are significantly less diverse than ImageNet images.
+        \item Furthermore, features of a positive observation may be strongly localized in specific image regions, but labels are ignored in pre-training.
+        \item Can \textit{SimMIM} perform self-supervised representation learning of radiographs?
+        \item If so, can the result be \textit{cheaply} finetuned to classify observations correctly?
+    \end{itemize}
 \end{itemize}
 
 \end{frame}
