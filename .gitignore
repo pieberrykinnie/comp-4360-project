@@ -252,3 +252,6 @@ __marimo__/
 .bak 
 .mtc
 build/
+
+# macOS
+.DS_Store
