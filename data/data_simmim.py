@@ -59,3 +59,31 @@ class MaskGenerator:
         token_mask = np.repeat(np.repeat(coarse_mask, self.scale, axis=0), self.scale, axis=1)
 
         return token_mask
+
+
+
+class SimMIMDataset:
+
+    def __init__(self, img_size: int, in_chans: int, mask_generator, train: bool = True,
+        use_random_resized_crop: bool = True, use_hflip: bool = False, mean=None, std=None):
+
+        if img_size <= 0:
+            raise ValueError("Eror the image size has to be positive.")
+        if in_chans not in (1, 3):
+            raise ValueError("the input channels must be either 1 or 3")
+        
+        self.img_size = img_size
+        self.in_chans = in_chans
+        self.mask_generator = mask_generator
+        self.train = train
+
+        if mean is None or std is None:
+            if in_chans == 1:
+                mean = [0.5]
+                std = [0.5]
+            # i got this fromt the imagenet dataset.
+            # we are only doing greyscale but i thought it would be good to have the option
+            # for 3 channels as well, so i just used the imagenet mean and std.
+            else:
+                mean = [0.485, 0.456, 0.406]
+                std = [0.229, 0.224, 0.225]
