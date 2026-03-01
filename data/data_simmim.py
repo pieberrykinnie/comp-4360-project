@@ -22,3 +22,8 @@ class MaskGenerator:
             raise ValueError("The input size must be divisible by the mask patch size")
         if mask_patch_size % model_patch_size != 0:
             raise ValueError("The mask patch size must be divisible by the model patch size")
+        
+        self.input_size = input_size
+        self.mask_patch_size = mask_patch_size
+        self.model_patch_size = model_patch_size
+        self.mask_ratio = float(mask_ratio)
