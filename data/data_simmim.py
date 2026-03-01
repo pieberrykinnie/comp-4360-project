@@ -129,3 +129,21 @@ class SimMIMDataset:
                 transforms.Normalize(mean=self.mean, std=self.std),
             ])
 
+    # makes our SimMIMDataset act like a function
+    def __call__(self, img):
+        # so if we are doing greyscale the we force 1 channel
+        if self.in_chans == 1:
+            img = img.convert("L") 
+            #if rgb then 3 chanels
+        else:
+            img = img.convert("RGB")
+        
+        # this is where i do the transofrmations that are in the __init__.
+        img_tensor = self.img_transform(img)
+
+        # this will generate our mask
+        mask_np = self.mask_generator()
+        # convert to torch because the model will need a torch tensor
+        mask = torch.from_numpy(mask_np).long()
+
+        return img_tensor, mask
