@@ -87,3 +87,45 @@ class SimMIMDataset:
             else:
                 mean = [0.485, 0.456, 0.406]
                 std = [0.229, 0.224, 0.225]
+
+        if len(mean) != in_chans or len(std) != in_chans:
+                raise ValueError(f"the length of mean and std must match the number of input channels ({in_chans})")
+
+        self.mean = mean
+        self.std = std
+
+
+        if train:
+            if use_random_resized_crop:
+                spatial = transforms.RandomResizedCrop(
+                    size=img_size,
+                    scale=(0.67, 1.0),   
+                    ratio=(0.75, 1.333), 
+                )
+            else:
+                spatial = transforms.Resize((img_size, img_size))
+            
+            #this means we do the spatial transform first
+            ops = [spatial]
+
+            #if we eneable this then we will randomly flip the image horizontally half the time.
+            if use_hflip:
+                ops.append(transforms.RandomHorizontalFlip(p=0.5))
+            
+            #convert the image to a tensor and normalize it 
+            ops += [
+                transforms.ToTensor(),
+                transforms.Normalize(mean=self.mean, std=self.std),
+            ]
+            # this will turn all our operations into a single function so that we can apply it to our images in the dataset class.
+            self.img_transform = transforms.Compose(ops)
+
+        # if we dont want any augmentation then we simply resize and cebtre the image and then convert it to a tensor and normalize it.
+        else:
+            self.img_transform = transforms.Compose([
+                transforms.Resize(img_size),
+                transforms.CenterCrop(img_size),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=self.mean, std=self.std),
+            ])
+
