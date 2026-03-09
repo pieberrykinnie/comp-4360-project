@@ -290,7 +290,7 @@ class VisionTransformer(nn.Module):
     
     def reset_classifier(self, num_classes, global_pool=''):
         self.num_classes = num_classes
-        self.head = nn.Linear(self.embed_dim, num_classes) > 0 else nn.Identity()
+        self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
         
     def forward_features(self, x):
         x = self.patch_embed(x)
@@ -303,8 +303,8 @@ class VisionTransformer(nn.Module):
         x = self.pos_drop(x)
         
         rel_pos_bias = self.rel_pos_bias() if self.rel_pos_bias is not None else None
-        for b1k in self.blocks:
-            x = b1k(x, rel_pos_bias=rel_pos_bias)
+        for blk in self.blocks:
+            x = blk(x, rel_pos_bias=rel_pos_bias)
             
         x = self.norm(x)
         if self.fc_norm is not None:
