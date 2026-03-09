@@ -109,6 +109,8 @@ def build_simmim(config):
             use_shared_rel_pos_bias=config.MODEL.VIT.USE_SHARED_RPB,
             use_mean_pooling=config.MODEL.VIT.USE_MEAN_POOLING)
         encoder_stride = 16
+    else:
+        raise NotImplementedError(f"Unknown pre-train model: {model_type}")
         
     model = SimMIM(encoder=encoder, encoder_stride=encoder_stride)
         
