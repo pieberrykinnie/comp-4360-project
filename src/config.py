@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -17,15 +17,15 @@ class ConfigData:
     MASK_PATCH_SIZE: [SimMIM] Mask patch size for MaskGenerator
     MASK_RATIO: [SimMIM] Mask ratio for MaskGenerator
     """
-    BATCH_SIZE: int
-    DATA_PATH: Path
-    DATASET: str
-    IMG_SIZE: int
-    INTERPOLATION: str
-    PIN_MEMORY: bool
-    NUM_WORKERS: int
-    MASK_PATCH_SIZE: int
-    MASK_RATIO: float
+    BATCH_SIZE: int = 128
+    DATA_PATH: Path = ""
+    DATASET: str = "imagenet"
+    IMG_SIZE: int = 224
+    INTERPOLATION: str = "bicubic"
+    PIN_MEMORY: bool = True
+    NUM_WORKERS: int = 8
+    MASK_PATCH_SIZE: int = 32
+    MASK_RATIO: float = 0.6
 
 
 @dataclass
@@ -35,17 +35,17 @@ class ConfigModelSwin:
 
     TODO: update description of parameters
     """
-    PATCH_SIZE: int
-    IN_CHANS: int
-    EMBED_DIM: int
-    DEPTHS: list[int]
-    NUM_HEADS: list[int]
-    WINDOW_SIZE: int
-    MLP_RATIO: float
-    QKV_BIAS: bool
-    QK_SCALE: float | None
-    APE: bool
-    PATCH_NORM: bool
+    PATCH_SIZE: int = 4
+    IN_CHANS: int = 3
+    EMBED_DIM: int = 96
+    DEPTHS: list[int] = field(default_factory=lambda: [2, 2, 6, 2])
+    NUM_HEADS: list[int] = field(default_factory=lambda: [3, 6, 12, 24])
+    WINDOW_SIZE: int = 7
+    MLP_RATIO: float = 4.
+    QKV_BIAS: bool = True
+    QK_SCALE: float | None = None
+    APE: bool = False
+    PATCH_NORM: bool = True
 
 
 @dataclass
@@ -55,18 +55,18 @@ class ConfigModelVit:
 
     TODO: update description of parameters
     """
-    PATCH_SIZE: int
-    IN_CHANS: int
-    EMBED_DIM: int
-    DEPTH: int
-    NUM_HEADS: int
-    MLP_RATIO: int
-    QKV_BIAS: bool
-    INIT_VALUES: float
-    USE_APE: bool
-    USE_RPB: bool
-    USE_SHARED_RPB: bool
-    USE_MEAN_POOLING: bool
+    PATCH_SIZE: int = 16
+    IN_CHANS: int = 3
+    EMBED_DIM: int = 768
+    DEPTH: int = 12
+    NUM_HEADS: int = 12
+    MLP_RATIO: int = 4
+    QKV_BIAS: bool = True
+    INIT_VALUES: float = 0.1
+    USE_APE: bool = False
+    USE_RPB: bool = False
+    USE_SHARED_RPB: bool = True
+    USE_MEAN_POOLING: bool = False
 
 
 @dataclass
@@ -84,15 +84,15 @@ class ConfigModel:
     SWIN: Swin Transformer parameters
     VIT: Vision Transformer parameters
     """
-    TYPE: str
-    NAME: str
-    RESUME: Path
-    NUM_CLASSES: int
-    DROP_RATE: float
-    DROP_PATH_RATE: float
-    LABEL_SMOOTHING: float
-    SWIN: ConfigModelSwin
-    VIT: ConfigModelVit
+    TYPE: str = "swin"
+    NAME: str = "swin_tiny_patch4_window7_224"
+    RESUME: Path = ""
+    NUM_CLASSES: int = 1000
+    DROP_RATE: float = 0.0
+    DROP_PATH_RATE: float = 0.1
+    LABEL_SMOOTHING: float = 0.1
+    SWIN: ConfigModelSwin = field(default_factory=ConfigModelSwin)
+    VIT: ConfigModelVit = field(default_factory=ConfigModelVit)
 
 
 @dataclass
@@ -106,11 +106,11 @@ class ConfigTrainLRScheduler:
     GAMMA: Gamma value, used in MultiStepLRScheduler
     MULTISTEPS: Multi steps value, used in MultiStepLRScheduler
     """
-    NAME: str
-    DECAY_EPOCHS: int
-    DECAY_RATE: float
-    GAMMA: float
-    MULTISTEPS: list[float]
+    NAME: str = "cosine"
+    DECAY_EPOCHS: int = 30
+    DECAY_RATE: float = 0.1
+    GAMMA: float = 0.1
+    MULTISTEPS: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -123,10 +123,10 @@ class ConfigTrainOptimizer:
     BETAS: Optimizer Betas
     MOMENTUM: SGD momentum
     """
-    NAME: str
-    EPS: float
-    BETAS: tuple[float, float]
-    MOMENTUM: float
+    NAME: str = "adamw"
+    EPS: float = 1e-8
+    BETAS: tuple[float, float] = field(default_factory=lambda: (0.9, 0.999))
+    MOMENTUM: float = 0.9
 
 
 @dataclass
@@ -149,20 +149,22 @@ class ConfigTrain:
     OPTIMIZER: Optimizer configuration
     LAYER_DECAY: [SimMIM] Layer decay for fine-tuning
     """
-    START_EPOCH: int
-    EPOCHS: int
-    WARMUP_EPOCHS: int
-    WEIGHT_DECAY: float
-    BASE_LR: float
-    WARMUP_LR: float
-    MIN_LR: float
-    CLIP_GRAD: float
-    AUTO_RESUME: bool
-    ACCUMULATION_STEPS: int
-    USE_CHECKPOINT: bool
-    LR_SCHEDULER: ConfigTrainLRScheduler
-    OPTIMIZER: ConfigTrainOptimizer
-    LAYER_DECAY: float
+    START_EPOCH: int = 0
+    EPOCHS: int = 300
+    WARMUP_EPOCHS: int = 20
+    WEIGHT_DECAY: float = 0.05
+    BASE_LR: float = 5e-4
+    WARMUP_LR: float = 5e-7
+    MIN_LR: float = 5e-6
+    CLIP_GRAD: float = 5.0
+    AUTO_RESUME: bool = True
+    ACCUMULATION_STEPS: int = 0
+    USE_CHECKPOINT: bool = False
+    LR_SCHEDULER: ConfigTrainLRScheduler = field(
+        default_factory=ConfigTrainLRScheduler)
+    OPTIMIZER: ConfigTrainOptimizer = field(
+        default_factory=ConfigTrainOptimizer)
+    LAYER_DECAY: float = 1.0
 
 
 @dataclass
@@ -182,17 +184,17 @@ class ConfigAug:
     MIXUP_SWITCH_PROB: Probability of switching to cutmix when both mixup and cutmix enabled
     MIXUP_MODE: How to apply mixup/cutmix params. Per "batch", "pair", or "elem"
     """
-    COLOR_JITTER: float
-    AUTO_AUGMENT: str
-    REPROB: float
-    REMODE: str
-    RECOUNT: int
-    MIXUP: float
-    CUTMIX: float
-    CUTMIX_MINMAX: float | None
-    MIXUP_PROB: float
-    MIXUP_SWITCH_PROB: float
-    MIXUP_MODE: str
+    COLOR_JITTER: float = 0.4
+    AUTO_AUGMENT: str = "rand-m9-mstd0.5-inc1"
+    REPROB: float = 0.25
+    REMODE: str = "pixel"
+    RECOUNT: int = 1
+    MIXUP: float = 0.8
+    CUTMIX: float = 1.0
+    CUTMIX_MINMAX: float | None = None
+    MIXUP_PROB: float = 1.0
+    MIXUP_SWITCH_PROB: float = 0.5
+    MIXUP_MODE: str = "batch"
 
 
 @dataclass
@@ -202,7 +204,7 @@ class ConfigTest:
 
     CROP: Whether to use center crop when testing
     """
-    CROP: bool
+    CROP: bool = True
 
 
 @dataclass
@@ -227,19 +229,19 @@ class Config:
     LOCAL_RANK: Local rank for DistributedDataParallel, given by command line argument
     PRETRAINED: [SimMIM] path to pre-trained model
     """
-    BASE: list[str]
-    DATA: ConfigData
-    MODEL: ConfigModel
-    TRAIN: ConfigTrain
-    AUG: ConfigAug
-    TEST: ConfigTest
-    AMP_OPT_LEVEL: str
-    OUTPUT: Path
-    TAG: str
-    SAVE_FREQ: int
-    PRINT_FREQ: int
-    SEED: int
-    EVAL_MODE: bool
-    THROUGHPUT_MODE: bool
-    LOCAL_RANK: int
-    PRETRAINED: Path
+    BASE: list[str] = field(default_factory=lambda: [""])
+    DATA: ConfigData = field(default_factory=ConfigData)
+    MODEL: ConfigModel = field(default_factory=ConfigModel)
+    TRAIN: ConfigTrain = field(default_factory=ConfigTrain)
+    AUG: ConfigAug = field(default_factory=ConfigAug)
+    TEST: ConfigTest = field(default_factory=ConfigTest)
+    AMP_OPT_LEVEL: str = ""
+    OUTPUT: Path = ""
+    TAG: str = "default"
+    SAVE_FREQ: int = 1
+    PRINT_FREQ: int = 10
+    SEED: int = 0
+    EVAL_MODE: bool = False
+    THROUGHPUT_MODE: bool = False
+    LOCAL_RANK: int = 0
+    PRETRAINED: Path = ""
