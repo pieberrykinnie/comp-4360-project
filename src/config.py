@@ -1,9 +1,19 @@
+from abc import ABC
 from dataclasses import dataclass, field
 from pathlib import Path
+import os
+import yaml
+
+
+class ConfigObject(ABC):
+    """
+    Abstract class denoting a configuration object.
+    """
+    pass
 
 
 @dataclass
-class ConfigData:
+class ConfigData(ConfigObject):
     """
     Configuration settings related to the data pipeline.
 
@@ -29,7 +39,7 @@ class ConfigData:
 
 
 @dataclass
-class ConfigModelSwin:
+class ConfigModelSwin(ConfigObject):
     """
     Configuration settings specific to the Swin Transformer.
 
@@ -49,7 +59,7 @@ class ConfigModelSwin:
 
 
 @dataclass
-class ConfigModelVit:
+class ConfigModelVit(ConfigObject):
     """
     Configuration settings specific to the Vision Transformer.
 
@@ -70,7 +80,7 @@ class ConfigModelVit:
 
 
 @dataclass
-class ConfigModel:
+class ConfigModel(ConfigObject):
     """
     Configuration settings related to the model in general.
 
@@ -96,7 +106,7 @@ class ConfigModel:
 
 
 @dataclass
-class ConfigTrainLRScheduler:
+class ConfigTrainLRScheduler(ConfigObject):
     """
     Configuration settings related to the learning rate scheduler.
 
@@ -114,7 +124,7 @@ class ConfigTrainLRScheduler:
 
 
 @dataclass
-class ConfigTrainOptimizer:
+class ConfigTrainOptimizer(ConfigObject):
     """
     Configuration settings related to the optimizer used in training.
 
@@ -130,7 +140,7 @@ class ConfigTrainOptimizer:
 
 
 @dataclass
-class ConfigTrain:
+class ConfigTrain(ConfigObject):
     """
     Configuration settings related to the training process.
 
@@ -168,7 +178,7 @@ class ConfigTrain:
 
 
 @dataclass
-class ConfigAug:
+class ConfigAug(ConfigObject):
     """
     Configuration settings related to data augmentation.
 
@@ -198,7 +208,7 @@ class ConfigAug:
 
 
 @dataclass
-class ConfigTest:
+class ConfigTest(ConfigObject):
     """
     Configuration settings related to testing.
 
@@ -208,7 +218,7 @@ class ConfigTest:
 
 
 @dataclass
-class Config:
+class Config(ConfigObject):
     """
     Configuration settings. May be overridden using the command line.
 
@@ -245,3 +255,46 @@ class Config:
     THROUGHPUT_MODE: bool = False
     LOCAL_RANK: int = 0
     PRETRAINED: Path = ""
+
+
+def _update_config_from_file(config: Config, cfg_file: Path) -> None:
+    """
+    Update the configuration as specified by a YAML config file.
+
+    Args:
+        config: The configuration object to update
+        cfg_file: Path to the config file
+    """
+    # Load the config file using pyyaml
+    with open(cfg_file, "r") as f:
+        yaml_cfg: dict = yaml.load(f, Loader=yaml.FullLoader)
+
+    print("Configuration file loaded at", os.path.join(
+        os.path.dirname(cfg_file)), cfg_file)
+
+    # Recursively update the config using the file's base configs, if specified
+    for cfg in yaml_cfg.setdefault("BASE", [""]):
+        if cfg != "":
+            _update_config_from_file(
+                config, os.path.join(os.path.dirname(cfg_file), cfg)
+            )
+
+    # Update the fields given by the configuration file
+    _update_fields_from_dict(config, yaml_cfg)
+
+
+def _update_fields_from_dict(config_obj: ConfigObject, cfg_dict: dict) -> None:
+    """
+    Update recursively the fields of a configuration object according to a dict.
+
+    Args:
+        config_obj: The configuration object to update.
+        cfg_dict: The configuration dictionary with fields to update from.
+    """
+    for attr in cfg_dict:
+        # Base case: Current field is a base field
+        if type(cfg_dict[attr]) is not dict:
+            setattr(config_obj, attr, cfg_dict[attr])
+        # Recursive case: Field is a mini-config
+        else:
+            _update_fields_from_dict(getattr(config_obj, attr), cfg_dict[attr])
