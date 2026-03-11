@@ -353,3 +353,18 @@ def _update_config_from_args(config: Config, args: Namespace) -> None:
 
     # Output folder
     config.OUTPUT = os.path.join(config.OUTPUT, config.MODEL.NAME, config.TAG)
+
+
+def get_config(args: Namespace) -> Config:
+    """
+    Return a Config object after applying configuration modifications.
+    Exposed to the main scripts.
+
+    Args:
+        args: The parsed arguments.
+    Return: A Config object with all necessary fields.
+    """
+    config: Config = Config()
+    _update_config_from_args(config, args)
+
+    return config
