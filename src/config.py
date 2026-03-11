@@ -1,4 +1,5 @@
 from abc import ABC
+from argparse import Namespace
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
@@ -298,3 +299,57 @@ def _update_fields_from_dict(config_obj: ConfigObject, cfg_dict: dict) -> None:
         # Recursive case: Field is a mini-config
         else:
             _update_fields_from_dict(getattr(config_obj, attr), cfg_dict[attr])
+
+
+def _update_config_from_args(config: Config, args: Namespace) -> None:
+    """
+    Update the fields of a configuration object from command line arguments.
+
+    Args:
+        config: The configuration to update.
+        args: The parsed arguments.
+    """
+    # Update the configuration to the required config file
+    _update_config_from_file(config, args.cfg)
+
+    # --opts is to manually set key-value pairs
+    if args.opts:
+        raise (NotImplementedError(
+            "i'm not supporting args.opts sry do things properly")
+        )
+
+    def _check_args(name: str) -> bool:
+        """
+        Check if the argument exists and is set.
+        """
+        return getattr(args, name, None) is not None
+
+    # Merge from specific arguments
+    if _check_args("batch_size"):
+        config.DATA.BATCH_SIZE = args.batch_size
+    if _check_args("data_path"):
+        config.DATA.DATA_PATH = args.data_path
+    if _check_args("resume"):
+        config.MODEL.RESUME = args.resume
+    if _check_args("pretrained"):
+        config.PRETRAINED = args.pretrained
+    if _check_args("accumulation_steps"):
+        config.TRAIN.ACCUMULATION_STEPS = args.accumulation_steps
+    if _check_args("use_checkpoint"):
+        config.TRAIN.USE_CHECKPOINT = True
+    if _check_args("amp_opt_level"):
+        config.AMP_OPT_LEVEL = args.amp_opt_level
+    if _check_args("output"):
+        config.OUTPUT = args.output
+    if _check_args("tag"):
+        config.TAG = args.tag
+    if _check_args("eval"):
+        config.EVAL_MODE = True
+    if _check_args("throughput"):
+        config.THROUGHPUT_MODE = True
+
+    # Set local rank for distributed training
+    config.LOCAL_RANK = args.local_rank
+
+    # Output folder
+    config.OUTPUT = os.path.join(config.OUTPUT, config.MODEL.NAME, config.TAG)
