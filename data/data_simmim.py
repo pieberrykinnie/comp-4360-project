@@ -147,3 +147,36 @@ class SimMIMDataset:
         mask = torch.from_numpy(mask_np).long()
 
         return img_tensor, mask
+    
+
+class CheXpertPretrainDataset(Dataset):
+     
+     def __init__(self, csv_path, img_root, transform, frontal_only=True, limit=None):
+        self.transform = transform
+        self.samples = []
+
+        with open(csv_path, "r", newline="") as f:
+            reader = csv.DictReader(f)
+
+            for row in reader:
+
+                if frontal_only:
+
+                    if row.get("Frontal/Lateral", "").strip() != "Frontal":
+                        continue
+
+                rel_path = row["Path"]
+                rel_path = rel_path.replace("/", os.sep)
+                full_path = os.path.normpath(os.path.join(img_root, rel_path))
+                self.samples.append(full_path)
+                
+                if limit is not None and len(self.samples) >= limit:
+                    break
+            
+            if len(self.samples) == 0:
+            raise ValueError(
+                "No images were loaded. Check:\n"
+                "- csv_path is correct\n"
+                "- img_root is correct (it should contain 'CheXpert-v1.0-small')\n"
+                "- frontal_only isn't filtering everything"
+            )
