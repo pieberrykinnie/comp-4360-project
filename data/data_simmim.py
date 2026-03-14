@@ -1,3 +1,5 @@
+from asyncio.log import logger
+from logging import config
 import os
 import csv 
 import numpy as np
@@ -217,3 +219,82 @@ def collate_fn(batch):
 
     return imgs, masks, targets
     
+
+def build_loader_simmim(config, logger, is_train=True):
+    
+    csv_path = config.DATA.CSV_PATH
+    img_root = config.DATA.IMG_ROOT
+
+    if not os.path.isfile(csv_path):
+        raise FileNotFoundError(f"the CSV file was not found: {csv_path}")
+    if not os.path.isdir(img_root):
+        raise FileNotFoundError(f"the image root directory was not found: {img_root}")
+    
+    if config.MODEL.TYPE.lower() == "vit":
+        in_chans = config.MODEL.VIT.IN_CHANS
+        model_patch_size = config.MODEL.VIT.PATCH_SIZE    
+    else: 
+        in_chains = config.MODEL.VIT.IN_CHANS
+        model_patch_size = config.MODEL.VIT.PATCH_SIZE
+
+    img_size = config.DATA.IMG_SIZE
+    mask_patch_size = config.DATA.MASK_PATCH_SIZE
+    mask_ratio = config.DATA.MASK_RATIO
+
+    #now we build the mask generator and the transform
+    mask_generator = MaskGenerator(
+        input_size=img_size,
+        mask_patch_size=mask_patch_size,
+        model_patch_size=model_patch_size,
+        mask_ratio=mask_ratio,
+    )
+
+    transform = SimMIMDataset(
+        img_size=img_size,
+        in_chans=in_chans,
+        mask_generator=mask_generator,
+        train=is_train,
+        use_random_resized_crop=is_train,
+        use_hflip=is_train,
+    )
+
+    # this is for debug n testing
+    if logger is not None:
+        logger.info(f"Using csv_path={csv_path}")
+        logger.info(f"Using img_root={img_root}")
+        logger.info(f"img_size={img_size}, in_chans={in_chans}, model_patch_size={model_patch_size}")
+        logger.info(f"mask_patch_size={mask_patch_size}, mask_ratio={mask_ratio}")
+
+
+    #this is the dataset and the loader
+    dataset = CheXpertPretrainDataset(
+        csv_path=csv_path,
+        img_root=img_root,
+        transform=transform,
+        frontal_only=True  
+    )
+
+    if logger is not None:
+        logger.info(f"Dataset size: {len(dataset)} samples")
+
+    # this is the build sampler
+    if dist.is_available() and dist.is_initialized():
+        num_replicas = dist.get_world_size()
+        rank = dist.get_rank()
+    else:
+        num_replicas = 1
+        rank = 0
+    
+    sampler = DistributedSampler(dataset, num_replicas=num_replicas, rank=rank, shuffle=is_train)   
+
+    # this is the dataloader
+    dataloader = DataLoader(
+         dataset,
+        batch_size=config.DATA.BATCH_SIZE,
+        sampler=sampler,
+        num_workers=config.DATA.NUM_WORKERS,
+        pin_memory=True,
+        drop_last=True,
+        collate_fn=collate_fn
+    )
+    return dataloader
