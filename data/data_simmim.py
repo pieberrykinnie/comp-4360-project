@@ -148,10 +148,14 @@ class SimMIMDataset:
 
         return img_tensor, mask
     
-
+# new dataset class 
 class CheXpertPretrainDataset(Dataset):
      
-     def __init__(self, csv_path, img_root, transform, frontal_only=True, limit=None):
+     # transform is the SimMimTransform object
+     # frontal_only is for if we want only front or bothe front abd back images. 
+     # i put limit for debugging and testing so that we dont have to load the whole dataset
+     #  every time, but it can be set to None to load everything.
+    def __init__(self, csv_path, img_root, transform, frontal_only=True, limit=None):
         self.transform = transform
         self.samples = []
 
@@ -173,10 +177,43 @@ class CheXpertPretrainDataset(Dataset):
                 if limit is not None and len(self.samples) >= limit:
                     break
             
-            if len(self.samples) == 0:
+        if len(self.samples) == 0:
             raise ValueError(
                 "No images were loaded. Check:\n"
                 "- csv_path is correct\n"
                 "- img_root is correct (it should contain 'CheXpert-v1.0-small')\n"
                 "- frontal_only isn't filtering everything"
-            )
+        )
+
+    def __len__(self):
+        # How many samples we have in the dataaset
+        return len(self.samples)
+    
+    def __getitem__(self, idx):
+        img_path = self.samples[idx]
+        try:
+            img = Image.open(img_path)
+        except Exception as e:
+            raise RuntimeError(f"Failed to open image: {img_path}") from e
+        
+        img_tensor, mask_tensor = self.transform(img)
+        dummy_target = 0
+        return (img_tensor, mask_tensor), dummy_target
+    
+# This is for the dataloader to collate our samples into batches. 
+
+def collate_fn(batch):
+
+    #here i am splitting the batch into images, masks, and targets.
+    imgs = [item[0][0] for item in batch]   
+    masks = [item[0][1] for item in batch]  
+    targets = [item[1] for item in batch]
+
+    imgs = torch.stack(imgs, dim=0)
+    masks = torch.stack(masks, dim=0)
+
+    #now we convert the targets to a tensor, 
+    targets = torch.tensor(targets, dtype=torch.long)
+
+    return imgs, masks, targets
+    
