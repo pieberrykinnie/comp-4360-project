@@ -54,6 +54,14 @@ def build_finetune_param_groups(model, weight_decay, logger=None):
 
     return group_param
 
+def create_adamw_optimizer(group_param, learning_rate, betas =(0.9, 0.999), eps=1e-8, logger=None):
+    optimizer = torch.optim.AdamW(group_param, lr=float(learning_rate), betas=betas, eps=float(eps))
+
+    if logger is not None:
+        logger.info(f" created the adamw optimizer with lr={learning_rate}, betas={betas}, eps={eps}")
+
+    return optimizer
+
 def build_optimizer(model, learning_rate, weight_decay, betas =(0.9, 0.999), eps=1e-8, logger=None):
    
     decay_params = []
