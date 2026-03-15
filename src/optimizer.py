@@ -1,4 +1,29 @@
+from tkinter.font import names
+from venv import logger
+
+from jupyter_server_terminals import msg
 import torch
+
+def logging(group_name, names, params, weight_decay, logger, max_num=5):
+   
+    total_scalar = sum(p.numel() for p in params)
+
+    msg = (f"{group_name} param group: {len(params)} tensors, {total_scalar} scalars, weight_decay={weight_decay}\n"
+          f"Example tensors: {', '.join(names[:max_num])}")
+   
+    if logger is not None:
+       logger.info(msg)
+    else:
+       print(msg)   
+
+    examples = names[:max_num]
+   
+    if examples:
+        ex_msg = f" examples: {examples}"
+        if logger is not None:
+            logger.info(ex_msg)
+        else:            
+            print(ex_msg)
 
 def should_use_weight_decay(param_name, param_tensor):
     if param_name.endswith('bias') or param_tensor.ndim == 1:
