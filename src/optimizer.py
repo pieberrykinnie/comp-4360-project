@@ -1,7 +1,3 @@
-from tkinter.font import names
-from venv import logger
-
-from jupyter_server_terminals import msg
 import torch
 
 def logging(group_name, names, params, weight_decay, logger, max_num=5):
@@ -32,16 +28,21 @@ def should_use_weight_decay(param_name, param_tensor):
 
 
 def build_pretrain_param_groups(model, weight_decay, logger=None):
-    decay_params = []
-    no_decay_params = []
+    decay_params, no_decay_params = [], []
+    decay_names, no_decay_names = [], []
 
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
         if should_use_weight_decay(name, param):
-            no_decay_params.append(param)
-        else:
             decay_params.append(param)
+            decay_names.append(name)
+        else:
+            no_decay_params.append(param)
+            no_decay_names.append(name)
+        
+        logging("decay group", decay_names, decay_params, weight_decay, logger)
+        logging("no_decay group", no_decay_names, no_decay_params, 0.0, logger)
 
     if logger is not None:
         logger.info(f"Pretrain param grouping:")
