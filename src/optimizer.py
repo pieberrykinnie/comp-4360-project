@@ -1,5 +1,10 @@
 import torch
 
+def should_use_weight_decay(param_name, param_tensor):
+    if param_name.endswith('bias') or param_tensor.ndim == 1:
+        return False
+    return True
+
 def build_optimizer(model, learning_rate, weight_decay, betas =(0.9, 0.999), eps=1e-8, logger=None):
    
     decay_params = []
@@ -8,7 +13,7 @@ def build_optimizer(model, learning_rate, weight_decay, betas =(0.9, 0.999), eps
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        if name.endswith('bias') or param.ndim == 1:
+        if should_use_weight_decay(name, param):
             no_decay_params.append(param)
         else:
             decay_params.append(param)
