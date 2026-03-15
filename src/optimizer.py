@@ -1,6 +1,6 @@
 import torch
 
-def logging(group_name, names, params, weight_decay, logger, max_num=5):
+def log_param_group(group_name, names, params, weight_decay, logger, max_num=5):
    
     total_scalar = sum(p.numel() for p in params)
 
@@ -22,7 +22,7 @@ def logging(group_name, names, params, weight_decay, logger, max_num=5):
             print(ex_msg)
 
 def should_use_weight_decay(param_name, param_tensor):
-    if param_name.endswith('bias') or param_tensor.ndim == 1:
+    if param_name.endswith('.bias') or param_tensor.ndim == 1:
         return False
     return True
 
@@ -41,8 +41,8 @@ def build_pretrain_param_groups(model, weight_decay, logger=None):
             no_decay_params.append(param)
             no_decay_names.append(name)
         
-        logging("decay group", decay_names, decay_params, weight_decay, logger)
-        logging("no_decay group", no_decay_names, no_decay_params, 0.0, logger)
+    log_param_group("decay group", decay_names, decay_params, weight_decay, logger)
+    log_param_group("no_decay group", no_decay_names, no_decay_params, 0.0, logger)
 
     if logger is not None:
         logger.info(f"Pretrain param grouping:")
@@ -64,9 +64,9 @@ def build_finetune_param_groups(model, weight_decay, logger=None):
         if not param.requires_grad:
             continue
         if should_use_weight_decay(name, param):
-            no_decay_params.append(param)
-        else:
             decay_params.append(param)
+        else:
+            no_decay_params.append(param)
 
     if logger is not None:
         logger.info(f"Finetune param grouping:")
