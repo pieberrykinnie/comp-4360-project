@@ -1,5 +1,3 @@
-from asyncio.log import logger
-from logging import config
 import os
 import csv 
 import numpy as np
@@ -81,8 +79,9 @@ class SimMIMDataset:
 
         if mean is None or std is None:
             if in_chans == 1:
-                mean = [0.5]
-                std = [0.5]
+                # got these values from running the compute_chexpert_mean_std.py script on the chexpert dataset.
+                mean = [0.533430]
+                std = [0.283167]
             # i got this fromt the imagenet dataset.
             # we are only doing greyscale but i thought it would be good to have the option
             # for 3 channels as well, so i just used the imagenet mean and std.
