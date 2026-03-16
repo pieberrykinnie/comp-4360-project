@@ -16,7 +16,7 @@ class VisionTransformerForSimMIM(VisionTransformer):
         
         assert self.num_classes == 0
         
-        self.mask_token = nn.Parameter(torch.zeroes(1, 1, self.embed_dim))
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
         self._trunc_normal_(self.mask_token, std=.02)
         
     def _trunc_normal_(self, tensor, mean=0, std=1.):
@@ -58,7 +58,7 @@ class SimMIM(nn.Module):
         
         self.decoder = nn.Sequential(
             nn.Conv2d(
-                in_channels=self.encoder.num_featuers,
+                in_channels=self.encoder.num_features,
                 out_channels=self.encoder_stride ** 2 * 3, kernel_size=1),
             nn.PixelShuffle(self.encoder_stride)
         )

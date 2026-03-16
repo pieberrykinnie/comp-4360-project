@@ -39,8 +39,8 @@ class Attention(nn.Module):
         self.qkv = nn.Linear(dim, all_head_dim * 3, bias = False)
         
         if qkv_bias:
-            self.q_bias = nn.Parameter(torch.zeroes(all_head_dim))
-            self.v_bias = nn.Parameter(torch.zeroes(all_head_dim))
+            self.q_bias = nn.Parameter(torch.zeros(all_head_dim))
+            self.v_bias = nn.Parameter(torch.zeros(all_head_dim))
         else:
             self.q_bias = None
             self.v_bias = None
@@ -49,7 +49,7 @@ class Attention(nn.Module):
             self.window_size = window_size
             self.num_relative_distance = (2 * window_size[0] - 1) * (2 * window_size[1] - 1) + 3
             self.relative_position_bias_table = nn.Parameter(
-                torch.zeroes(self.num_relative_distance, num_heads)
+                torch.zeros(self.num_relative_distance, num_heads)
             ) # 2*Wh-1 * 2*Ww-1, nH
             
             coords_h = torch.arange(window_size[0])
@@ -61,7 +61,7 @@ class Attention(nn.Module):
             relative_coords[:, :, 1] += window_size[1] - 1
             relative_coords[:, :, 0] *= 2 * window_size[1] - 1
             relative_position_index = \
-                torch.zeroes(size=(window_size[0] * window_size[1] + 1, ) * 2, dtype=relative_coords.dtype)
+                torch.zeros(size=(window_size[0] * window_size[1] + 1, ) * 2, dtype=relative_coords.dtype)
             relative_position_index[1:, 1:] = relative_coords.sum(-1)
             relative_position_index[0, 0:] = self.num_relative_distance - 3
             relative_position_index[0:, 0] = self.num_relative_distance - 2
@@ -81,34 +81,34 @@ class Attention(nn.Module):
         B, N, C = x.shape
         qkv_bias = None
         if self.q_bias is not None:
-            qkv_bias = torch.cat((self.q_bias, torch.zeroes_like(self.v_bias, requires_grad=False), self.v_bias))
-            qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
-            qkv = qkv.reshape(B, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
-            q, k, v = qkv[0], qkv[1], qkv[2]
+            qkv_bias = torch.cat((self.q_bias, torch.zeros_like(self.v_bias, requires_grad=False), self.v_bias))
+        qkv = F.linear(input=x, weight=self.qkv.weight, bias=qkv_bias)
+        qkv = qkv.reshape(B, N, 3, self.num_heads, -1).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        
+        q = q * self.scale
+        attn = (q @ q.transpose(-2, -1))
+        
+        if self.relative_position_bias_table is not None:
+            relative_position_bias = \
+                self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+                    self.window_size[0] * self.window_size[1] + 1,
+                    self.window_size[0] * self.window_size[1] + 1,
+                    -1
+                )
+            relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()
+            attn = attn + relative_position_bias.unsqueeze(0)
             
-            q = q * self.scale
-            attn = (q @ q.transpose(-2, -1))
-            
-            if self.relative_position_bias_table is not None:
-                relative_position_bias = \
-                    self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-                        self.window_size[0] * self.window_size[1] + 1,
-                        self.window_size[0] * self.window_size[1] + 1,
-                        -1
-                    )
-                relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()
-                attn = attn + relative_position_bias.unsqueeze(0)
-                
-            if rel_pos_bias is not None:
-                attn = attn + rel_pos_bias
-            
-            attn = attn.softmax(dim=-1)
-            attn = self.attn_drop(attn)
-            
-            x = (attn @ v).transpose(1,2).reshape(B, N, -1)
-            x = self.proj(x)
-            x = self.proj_drop(x)
-            return x
+        if rel_pos_bias is not None:
+            attn = attn + rel_pos_bias
+        
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        
+        x = (attn @ v).transpose(1,2).reshape(B, N, -1)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
 
 
 class Block(nn.Module):
@@ -172,7 +172,7 @@ class RelativePositionBias(nn.Module):
         self.window_size = window_size
         self.num_relative_distance = (2 * window_size[0] - 1) * (2 * window_size[1] - 1) + 3
         self.relative_position_bias_table = nn.Parameter(
-            torch.zeroes(self.num_relative_distance, num_heads))
+            torch.zeros(self.num_relative_distance, num_heads))
         # cls to token & token 2 clas & cls to cls
         
         # get pair-wise relative position index for each toekn inside window
@@ -186,7 +186,7 @@ class RelativePositionBias(nn.Module):
         relative_coords[:, :, 1] += window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * window_size[1] - 1
         relative_position_index = \
-            torch.zeroes(size=(window_size[1] * window_size[1] + 1,) * 2, dtype=relative_coords.dtype)
+            torch.zeros(size=(window_size[1] * window_size[1] + 1,) * 2, dtype=relative_coords.dtype)
         relative_position_index[1:, 1:] = relative_coords.sum(-1)
         relative_position_index[0, 0:] = self.num_relative_distance - 3
         relative_position_index[0:, 0] = self.num_relative_distance - 2
@@ -203,7 +203,7 @@ class RelativePositionBias(nn.Module):
 
 
 class VisionTransformer(nn.Module):
-    def __init__(self, img_size=224, patch_size=16, in_chans=4, num_classes=1000, embed_dim=768, depth=12,
+    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, embed_dim=768, depth=12,
                 num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
                 drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None,
                 use_abs_pos_emb=True, use_rel_pos_bias=False, use_shared_rel_pos_bias=False,
@@ -218,9 +218,9 @@ class VisionTransformer(nn.Module):
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
         num_patches = self.patch_embed.num_patches
         
-        self.cls_token = nn.Parameter(torch.zeroes(1, 1, embed_dim))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         if use_abs_pos_emb:
-            self.pos_embed = nn.Parameter(torch.zeroes(1, num_patches + 1, embed_dim))
+            self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
         else:
             self.pos_embed = None
         self.pos_drop = nn.Dropout(p=drop_rate)
@@ -238,7 +238,7 @@ class VisionTransformer(nn.Module):
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
                 init_values=init_values, window_size=self.patch_embed.patch_shape if use_rel_pos_bias else None)
             for i in range(depth)])
-        self.norm = nn.Identiy() if use_mean_pooling else norm_layer(embed_dim)
+        self.norm = nn.Identity() if use_mean_pooling else norm_layer(embed_dim)
         self.fc_norm = norm_layer(embed_dim) if use_mean_pooling else None
         self.head = nn.Linear(embed_dim, num_classes) if num_classes > 0 else nn.Identity()
         
@@ -274,7 +274,7 @@ class VisionTransformer(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
         elif isinstance(m, nn.Conv2d):
-            self._trunc_normal_(m.weifht, std=.02)
+            self._trunc_normal_(m.weight, std=.02)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
     
