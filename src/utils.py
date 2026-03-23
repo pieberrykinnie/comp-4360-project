@@ -13,7 +13,7 @@ def is_dist_initialized():
 
     return True
 
-def reduce_tebsore(tensor):
+def reduce_tensor(tensor):
     if not is_dist_initialized():
         return tensor
 
