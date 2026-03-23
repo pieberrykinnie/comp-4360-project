@@ -1,119 +1,119 @@
-from logging import Logger
-from torch import optim
-from torch.nn import Module
-from torch.nn.parameter import Parameter
+import torch
 
+def log_param_group(group_name, names, params, weight_decay, logger, max_num=5):
+   
+    total_scalar = sum(p.numel() for p in params)
 
-def build_optimizer(config, model: Module, logger: Logger, is_pretrain: bool) -> optim.Optimizer:
-    """
-    Interface to return the appropriate optimizer.
-
-    Args:
-        config: The configuration class being used.
-        model: The model being used.
-        logger: The logger.
-        is_pretrain: Whether the optimizer is for the pretraining or finetuning process.
-
-    Return: The optimizer object.
-    """
-    if is_pretrain:
-        return build_pretrain_optimizer(config, model, logger)
+    msg = (f"{group_name} param group: {len(params)} tensors, {total_scalar} scalars, weight_decay={weight_decay}\n"
+          f"Example tensors: {', '.join(names[:max_num])}")
+   
+    if logger is not None:
+       logger.info(msg)
     else:
-        raise NotImplementedError(
-            "Finetuning optimizer not currently implemented."
-        )
+       print(msg)   
+
+    examples = names[:max_num]
+   
+    if examples:
+        ex_msg = f" examples: {examples}"
+        if logger is not None:
+            logger.info(ex_msg)
+        else:            
+            print(ex_msg)
+
+def should_use_weight_decay(param_name, param_tensor):
+    if param_name.endswith('.bias') or param_tensor.ndim == 1:
+        return False
+    return True
 
 
-def build_pretrain_optimizer(config, model: Module, logger: Logger) -> optim.Optimizer:
-    """
-    Build an optimizer for the pre-training process.
+def build_pretrain_param_groups(model, weight_decay, logger=None):
+    decay_params, no_decay_params = [], []
+    decay_names, no_decay_names = [], []
 
-    Args:
-        config: The configuration class being used.
-        model: The model being used.
-        logger: The logger.
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if should_use_weight_decay(name, param):
+            decay_params.append(param)
+            decay_names.append(name)
+        else:
+            no_decay_params.append(param)
+            no_decay_names.append(name)
+        
+    log_param_group("decay group", decay_names, decay_params, weight_decay, logger)
+    log_param_group("no_decay group", no_decay_names, no_decay_params, 0.0, logger)
 
-    Return: The optimizer object.
-    """
-    logger.info("> Building optimizer for Pre-training stage...")
+    if logger is not None:
+        logger.info(f"Pretrain param grouping:")
+        logger.info(f"decay params: {len(decay_params)} tensors, wd={weight_decay}")
+        logger.info(f"no_decay params: {len(no_decay_params)} tensors, wd=0.0")
 
-    # Get model's parameters that will not be penalized during weight decay
-    skip: set[str] = {}
-    skip_keywords: set[str] = {}
+    group_param = [
+        {'params': decay_params, 'weight_decay': float(weight_decay)},
+        {'params': no_decay_params, 'weight_decay': 0.0}
+    ]
 
-    if hasattr(model, "no_weight_decay"):
-        skip = model.no_weight_decay()
-        logger.info(f"No weight decay: {skip}")
-    if hasattr(model, "no_weight_decay_keywords"):
-        skip_keywords = model.no_weight_decay_keywords()
-        logger.info(f"No weight decay keywords: {skip_keywords}")
+    return group_param
 
-    # Get model's trainable parameters and which to remove weight decay for
-    parameters: list[dict[str, Parameter | float]] = get_pretrain_param_groups(
-        model, logger, skip, skip_keywords
-    )
+def build_finetune_param_groups(model, weight_decay, logger=None):
+    decay_params = []
+    no_decay_params = []
 
-    # Get configured optimizer
-    opt_lower: str = config.TRAIN.OPTIMIZER.NAME.lower()
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if should_use_weight_decay(name, param):
+            decay_params.append(param)
+        else:
+            no_decay_params.append(param)
 
-    optimizer: optim.Optimizer
+    if logger is not None:
+        logger.info(f"Finetune param grouping:")
+        logger.info(f"decay params: {len(decay_params)} tensors, wd={weight_decay}")
+        logger.info(f"no_decay params: {len(no_decay_params)} tensors, wd=0.0")
 
-    if opt_lower == "sgd":
-        optimizer = optim.SGD(parameters, momentum=config.TRAIN.OPTIMIZER.MOMENTUM,
-                              nesterov=True, lr=config.TRAIN.BASE_LR,
-                              weight_decay=config.TRAIN.WEIGHT_DECAY)
-    elif opt_lower == "adamw":
-        optimizer = optim.AdamW(parameters, eps=config.TRAIN.OPTIMIZER.EPS,
-                                betas=config.TRAIN.OPTIMIZER.BETAS,
-                                lr=config.TRAIN.BASE_LR,
-                                weight_decay=config.TRAIN.WEIGHT_DECAY)
-    # OG implementation just let the function return None; anti-pattern removed
-    else:
-        raise NotImplementedError(f"Optimizer {opt_lower} is not supported!")
+    group_param = [
+        {'params': decay_params, 'weight_decay': float(weight_decay)},
+        {'params': no_decay_params, 'weight_decay': 0.0}
+    ]
 
-    logger.info(f"Optimizer initialized: {optimizer}")
+    return group_param
+
+def create_adamw_optimizer(group_param, learning_rate, betas =(0.9, 0.999), eps=1e-8, logger=None):
+    optimizer = torch.optim.AdamW(group_param, lr=float(learning_rate), betas=betas, eps=float(eps))
+
+    if logger is not None:
+        logger.info(f" created the adamw optimizer with lr={learning_rate}, betas={betas}, eps={eps}")
 
     return optimizer
 
-
-def get_pretrain_param_groups(
-    model: Module, logger: Logger, skip: set[str], skip_keywords: set[str]
-) -> list[dict[str, Parameter | float]]:
-    """
-    Return a list of parameters from the model, indicating which ones not to
-    perform weight decay on.
-
-    Args:
-        model: The model being used.
-        logger: The logger.
-        skip: The list of parameter names to skip for weight decay.
-        skip_keywords: The list of keywords whose parameters including them will be skipped.
-
-    Return: An iterable of parameter dicts to pass to the optimizer.
-    """
-    has_decay: list[Parameter] = []
-    no_decay: list[Parameter] = []
-    has_decay_name: list[str] = []
-    no_decay_name: list[str] = []
+def build_optimizer(model, learning_rate, weight_decay, betas =(0.9, 0.999), eps=1e-8, logger=None):
+   
+    decay_params = []
+    no_decay_params = []
 
     for name, param in model.named_parameters():
-        # Only consider trainable parameters
-        if param.requires_grad:
-            # Skip applying weight decay to:
-            # - Scalar parameters
-            # - Any bias parameter
-            # - Skipped parameters
-            no_decay_param: bool = len(param.shape) == 1 or name.endswith(".bias") \
-                or name in skip or any([keyword in name for keyword in skip_keywords])
+        if not param.requires_grad:
+            continue
+        if should_use_weight_decay(name, param):
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
 
-            if no_decay_param:
-                no_decay.append(param)
-                no_decay_name.append(name)
-            else:
-                has_decay.append(param)
-                has_decay_name.append(name)
+    if logger is not None:
+        logger.info(f"Optimizer grouping:")
+        logger.info(f"decay params: {len(decay_params)} tensors, wd={weight_decay}")
+        logger.info(f"no_decay params: {len(no_decay_params)} tensors, wd=0.0")
 
-    logger.info(f"Parameters without decay: {no_decay_name}")
-    logger.info(f"Parameters with decay: {has_decay_name}")
+    group_param = [
+        {'params': decay_params, 'weight_decay': float(weight_decay)},
+        {'params': no_decay_params, 'weight_decay': 0.0}
+    ]
 
-    return [{"params": has_decay}, {"params": no_decay, "weight_decay": 0.}]
+    optimizer = torch.optim.AdamW(group_param, lr=float(learning_rate), betas=betas, eps=float(eps))
+
+    if logger is not None:
+        logger.info(f" created the adamw optimizer with lr={learning_rate}, weight_decay={weight_decay}, betas={betas}, eps={eps}")
+
+    return optimizer
