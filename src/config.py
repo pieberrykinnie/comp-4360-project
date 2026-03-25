@@ -30,6 +30,8 @@ class ConfigData(ConfigObject):
     """
     BATCH_SIZE: int = 128
     DATA_PATH: Path = ""
+    CSV_PATH: Path = ""
+    IMG_ROOT: Path = "" 
     DATASET: str = "imagenet"
     IMG_SIZE: int = 224
     INTERPOLATION: str = "bicubic"
@@ -47,7 +49,7 @@ class ConfigModelSwin(ConfigObject):
     TODO: update description of parameters
     """
     PATCH_SIZE: int = 4
-    IN_CHANS: int = 3
+    IN_CHANS: int = 1
     EMBED_DIM: int = 96
     DEPTHS: list[int] = field(default_factory=lambda: [2, 2, 6, 2])
     NUM_HEADS: list[int] = field(default_factory=lambda: [3, 6, 12, 24])
@@ -67,7 +69,7 @@ class ConfigModelVit(ConfigObject):
     TODO: update description of parameters
     """
     PATCH_SIZE: int = 16
-    IN_CHANS: int = 3
+    IN_CHANS: int = 1
     EMBED_DIM: int = 768
     DEPTH: int = 12
     NUM_HEADS: int = 12

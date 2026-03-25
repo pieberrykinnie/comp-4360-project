@@ -219,27 +219,40 @@ def collate_fn(batch):
     return imgs, masks, targets
     
 
-def build_loader_simmim(
-    csv_path: str,
-    img_root: str,
-    batch_size: int,
-    num_workers: int,
-    img_size: int = 224,
-    in_chans: int = 1,              
-    model_patch_size: int = 16,      
-    mask_patch_size: int = 32,
-    mask_ratio: float = 0.6,
-    is_train: bool = True,
-    frontal_only: bool = True,
-    pin_memory: bool = True,
-    drop_last: bool = True,):
+def build_loader_simmim(config, logger=None):
+
+    csv_path = config.DATA.CSV_PATH
+    img_root = config.DATA.IMG_ROOT
+    batch_size = config.DATA.BATCH_SIZE
+    num_workers = config.DATA.NUM_WORKERS
+    img_size = config.DATA.IMG_SIZE
+    mask_patch_size = config.DATA.MASK_PATCH_SIZE
+    mask_ratio = config.DATA.MASK_RATIO
+    pin_memory = config.DATA.PIN_MEMORY
+
+    if config.MODEL.TYPE == "vit":
+        in_chans = config.MODEL.VIT.IN_CHANS
+        model_patch_size = config.MODEL.VIT.PATCH_SIZE
+    elif config.MODEL.TYPE == "swin":
+        in_chans = config.MODEL.SWIN.IN_CHANS
+        model_patch_size = config.MODEL.SWIN.PATCH_SIZE
+    else:
+        raise ValueError(f"Unsupported model type: {config.MODEL.TYPE}")
 
     if not os.path.isfile(csv_path):
         raise FileNotFoundError(f"the CSV file was not found: {csv_path}")
     if not os.path.isdir(img_root):
         raise FileNotFoundError(f"the image root directory was not found: {img_root}")
 
-    #now we build the mask generator and the transform
+    if logger is not None:
+        logger.info(f"Using CSV file: {csv_path}")
+        logger.info(f"Using image root: {img_root}")
+        logger.info(f"Input image size: {img_size}")
+        logger.info(f"Input channels: {in_chans}")
+        logger.info(f"Mask patch size: {mask_patch_size}")
+        logger.info(f"Mask ratio: {mask_ratio}")
+
+    # build the mask generator and transform
     mask_generator = MaskGenerator(
         input_size=img_size,
         mask_patch_size=mask_patch_size,
@@ -251,38 +264,43 @@ def build_loader_simmim(
         img_size=img_size,
         in_chans=in_chans,
         mask_generator=mask_generator,
-        train=is_train,
+        train=True,
         use_random_resized_crop=True,
         use_hflip=False
     )
 
-
-    #this is the dataset and the loader
     dataset = CheXpertPretrainDataset(
         csv_path=csv_path,
         img_root=img_root,
         transform=transform,
-        frontal_only=frontal_only
+        frontal_only=True
     )
 
-    # this is the build sampler
+    if logger is not None:
+        logger.info(f"Built pretraining dataset with {len(dataset)} images")
+
     if dist.is_available() and dist.is_initialized():
         num_replicas = dist.get_world_size()
         rank = dist.get_rank()
     else:
         num_replicas = 1
         rank = 0
-    
-    sampler = DistributedSampler(dataset, num_replicas=num_replicas, rank=rank, shuffle=True)   
 
-    # this is the dataloader
+    sampler = DistributedSampler(
+        dataset,
+        num_replicas=num_replicas,
+        rank=rank,
+        shuffle=True
+    )
+
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
-        sampler=sampler,           
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=pin_memory,
-        drop_last=drop_last,
+        drop_last=True,
         collate_fn=collate_fn
     )
+
     return dataloader
