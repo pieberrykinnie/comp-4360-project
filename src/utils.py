@@ -246,3 +246,88 @@ def load_pretrained(config, model, logger=None):
     del checkpoint
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+
+def remap_pretrained_keys_vit(checkpoint_model, model, logger=None):
+
+    model_state = model.state_dict()
+    new_checkpoint_model = {}
+
+    skipped_missing = []
+    skipped_shape = []
+    removed_prefix_count = 0
+
+    for key, value in checkpoint_model.items():
+        new_key = key
+
+        if new_key.startswith("encoder."):
+            new_key = new_key.replace("encoder.", "", 1)
+            removed_prefix_count += 1
+
+        if new_key not in model_state:
+            skipped_missing.append(new_key)
+            continue
+
+        if model_state[new_key].shape != value.shape:
+            skipped_shape.append(
+                (new_key, tuple(value.shape), tuple(model_state[new_key].shape))
+            )
+            continue
+
+        new_checkpoint_model[new_key] = value
+
+    if logger is not None:
+        logger.info("ViT pretrained key remapping summary:")
+        logger.info(f"Removed 'encoder.' prefix from {removed_prefix_count} keys")
+        logger.info(f"Skipped {len(skipped_missing)} missing keys")
+        logger.info(f"Skipped {len(skipped_shape)} shape mismatch keys")
+
+        if len(skipped_missing) > 0:
+            logger.info(f"Example missing keys: {skipped_missing[:10]}")
+
+        if len(skipped_shape) > 0:
+            logger.info(f"Example shape mismatches: {skipped_shape[:10]}")
+
+    return new_checkpoint_model
+
+def remap_pretrained_keys_swin(checkpoint_model, model, logger=None):
+
+    model_state = model.state_dict()
+    new_checkpoint_model = {}
+
+    skipped_missing = []
+    skipped_shape = []
+    removed_prefix_count = 0
+
+    for key, value in checkpoint_model.items():
+        new_key = key
+
+        if new_key.startswith("encoder."):
+            new_key = new_key.replace("encoder.", "", 1)
+            removed_prefix_count += 1
+
+        if new_key not in model_state:
+            skipped_missing.append(new_key)
+            continue
+
+        if model_state[new_key].shape != value.shape:
+            skipped_shape.append(
+                (new_key, tuple(value.shape), tuple(model_state[new_key].shape))
+            )
+            continue
+
+        new_checkpoint_model[new_key] = value
+
+    if logger is not None:
+        logger.info("Swin pretrained key remapping summary:")
+        logger.info(f"Removed 'encoder.' prefix from {removed_prefix_count} keys")
+        logger.info(f"Skipped {len(skipped_missing)} missing keys")
+        logger.info(f"Skipped {len(skipped_shape)} shape mismatch keys")
+
+        if len(skipped_missing) > 0:
+            logger.info(f"Example missing keys: {skipped_missing[:10]}")
+
+        if len(skipped_shape) > 0:
+            logger.info(f"Example shape mismatches: {skipped_shape[:10]}")
+
+    return new_checkpoint_model
