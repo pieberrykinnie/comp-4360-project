@@ -145,7 +145,7 @@ class PatchEmbed(nn.Module):
     """
     Image to Patch Embedding
     """
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, embed_dim=768):
+    def __init__(self, img_size=224, patch_size=16, in_chans=1, embed_dim=768): # default in_chans = 1 for chexpert
         super().__init__()
         img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
