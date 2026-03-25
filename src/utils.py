@@ -40,74 +40,127 @@ def get_grad_norm(parameters):
     return total_norm
 
 #i created this so we can save a checkpoint to disk
-def save_checkpoint(save_path, model, optimizer=None, scheduler=None, epoch=None, best_metric=None, logger=None):
-    checkpoint = {
-        "model": model.state_dict()
+def save_checkpoint(config, epoch, model, max_accuracy, optimizer=None, lr_scheduler=None, logger=None):
+    save_state = {
+        "model": model.state_dict(),
+        "epoch": epoch,
+        "max_accuracy": max_accuracy,
     }
 
-# only save if it exists, otherwise we can skip it
     if optimizer is not None:
-        checkpoint["optimizer"] = optimizer.state_dict()
+        save_state["optimizer"] = optimizer.state_dict()
 
-    if scheduler is not None:
-        checkpoint["scheduler"] = scheduler.state_dict()
+    if lr_scheduler is not None:
+        save_state["lr_scheduler"] = lr_scheduler.state_dict()
 
-    if epoch is not None:
-        checkpoint["epoch"] = epoch
+    save_dir = config.OUTPUT
+    os.makedirs(save_dir, exist_ok=True)
 
-    if best_metric is not None:
-        checkpoint["best_metric"] = best_metric
-
-    # we check if folder actually exists
-    save_dir = os.path.dirname(save_path)
-    if save_dir != "":
-        os.makedirs(save_dir, exist_ok=True)
-    
-    torch.save(checkpoint, save_path)
+    save_path = os.path.join(save_dir, f"ckpt_epoch_{epoch}.pth")
 
     if logger is not None:
-        logger.info(f"Saved checkpoint to {save_path}")
+        logger.info(f"Saving checkpoint to {save_path}")
+
+    torch.save(save_state, save_path)
+
+    if logger is not None:
+        logger.info(f"Checkpoint saved: {save_path}")
     else:
-        print(f"Saved checkpoint to {save_path}")
+        print(f"Checkpoint saved: {save_path}")
+
+
 
 #this is so we can load a checkpoint from disk
-def load_checkpoint(load_path, model, optimizer=None, scheduler=None, logger=None, map_location="cpu"):
+def load_checkpoint(config, model, optimizer=None, lr_scheduler=None, logger=None):
+
+    load_path = config.MODEL.RESUME
+
     if not os.path.isfile(load_path):
         raise FileNotFoundError(f"Checkpoint file not found: {load_path}")
 
-    checkpoint = torch.load(load_path, map_location=map_location)
+    if logger is not None:
+        logger.info(f"Loading checkpoint from {load_path}")
+
+    checkpoint = torch.load(load_path, map_location="cpu")
+
     model.load_state_dict(checkpoint["model"])
 
     if optimizer is not None and "optimizer" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer"])
 
-    if scheduler is not None and "scheduler" in checkpoint:
-        scheduler.load_state_dict(checkpoint["scheduler"])
+    if lr_scheduler is not None and "lr_scheduler" in checkpoint:
+        lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
 
-    epoch = checkpoint.get("epoch", -1)
-    best_metric = checkpoint.get("best_metric", None)
+    if "epoch" in checkpoint:
+        config.defrost()
+        config.TRAIN.START_EPOCH = checkpoint["epoch"] + 1
+        config.freeze()
 
-    start_epoch = epoch + 1 if epoch >= 0 else 0
+    max_accuracy = checkpoint.get("max_accuracy", 0.0)
 
     if logger is not None:
-        logger.info(f"Loaded checkpoint from {load_path} (epoch: {epoch}, best_metric: {best_metric})")
-    else:
-        print(f"Loaded checkpoint from {load_path} (epoch: {epoch}, best_metric: {best_metric})")
+        logger.info(f"Loaded checkpoint successfully")
+        logger.info(f"Resuming from epoch {config.TRAIN.START_EPOCH}")
+        logger.info(f"Max accuracy from checkpoint: {max_accuracy}")
 
-    return start_epoch, best_metric
+    del checkpoint
+    torch.cuda.empty_cache()
 
-def auto_resume_helper(output_dir):
+    return max_accuracy
+
+def auto_resume_helper(output_dir, logger=None):
+
     if not os.path.isdir(output_dir):
         return None
+
     checkpoint_files = []
 
     for file_name in os.listdir(output_dir):
         if file_name.endswith(".pth"):
-            full_path = os.path.join(output_dir, file_name)
-            checkpoint_files.append(full_path)
-    
+            checkpoint_files.append(os.path.join(output_dir, file_name))
+
     if len(checkpoint_files) == 0:
+        if logger is not None:
+            logger.info(f"No checkpoints found in {output_dir}")
         return None
-    
+
     latest_checkpoint = max(checkpoint_files, key=os.path.getmtime)
+
+    if logger is not None:
+        logger.info(f"Latest checkpoint found: {latest_checkpoint}")
+
     return latest_checkpoint
+
+def load_pretrained(config, model, logger=None):
+
+    load_path = config.PRETRAINED
+
+    if not os.path.isfile(load_path):
+        raise FileNotFoundError(f"Pretrained checkpoint not found: {load_path}")
+
+    if logger is not None:
+        logger.info(f"Loading pretrained weights from {load_path}")
+
+    checkpoint = torch.load(load_path, map_location="cpu")
+    checkpoint_model = checkpoint["model"]
+
+    # If the checkpoint came from SimMIM pretraining, the backbone is often under "encoder."
+    if any(key.startswith("encoder.") for key in checkpoint_model.keys()):
+        new_state_dict = {}
+        for key, value in checkpoint_model.items():
+            if key.startswith("encoder."):
+                new_key = key.replace("encoder.", "", 1)
+                new_state_dict[new_key] = value
+        checkpoint_model = new_state_dict
+
+        if logger is not None:
+            logger.info("Removed 'encoder.' prefix from pretrained checkpoint keys")
+
+    msg = model.load_state_dict(checkpoint_model, strict=False)
+
+    if logger is not None:
+        logger.info(msg)
+        logger.info(f"Loaded pretrained weights successfully from {load_path}")
+
+    del checkpoint
+    torch.cuda.empty_cache()
