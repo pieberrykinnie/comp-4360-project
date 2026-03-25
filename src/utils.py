@@ -164,3 +164,85 @@ def load_pretrained(config, model, logger=None):
 
     del checkpoint
     torch.cuda.empty_cache()
+
+
+def load_pretrained(config, model, logger=None):
+
+    load_path = config.PRETRAINED
+
+    if load_path is None or load_path == "":
+        raise ValueError("config.PRETRAINED is empty. Please provide a pretrained checkpoint path.")
+
+    if not os.path.isfile(load_path):
+        raise FileNotFoundError(f"Pretrained checkpoint not found: {load_path}")
+
+    if logger is not None:
+        logger.info(f"Loading pretrained checkpoint from: {load_path}")
+    else:
+        print(f"Loading pretrained checkpoint from: {load_path}")
+
+    checkpoint = torch.load(load_path, map_location="cpu")
+
+    if "model" in checkpoint:
+        checkpoint_model = checkpoint["model"]
+    else:
+        checkpoint_model = checkpoint
+
+    current_model_state = model.state_dict()
+    filtered_state = {}
+
+    removed_prefix_count = 0
+    skipped_missing_key = []
+    skipped_shape_mismatch = []
+
+    for key, value in checkpoint_model.items():
+        new_key = key
+
+        if new_key.startswith("encoder."):
+            new_key = new_key.replace("encoder.", "", 1)
+            removed_prefix_count += 1
+
+        if new_key not in current_model_state:
+            skipped_missing_key.append(new_key)
+            continue
+
+        if current_model_state[new_key].shape != value.shape:
+            skipped_shape_mismatch.append(
+                (new_key, tuple(value.shape), tuple(current_model_state[new_key].shape))
+            )
+            continue
+
+        filtered_state[new_key] = value
+
+    load_msg = model.load_state_dict(filtered_state, strict=False)
+
+    if logger is not None:
+        logger.info(f"Loaded {len(filtered_state)} matching pretrained tensors")
+        logger.info(f"Removed 'encoder.' prefix from {removed_prefix_count} keys")
+        logger.info(f"Skipped {len(skipped_missing_key)} keys not found in current model")
+        logger.info(f"Skipped {len(skipped_shape_mismatch)} keys with shape mismatch")
+        logger.info(f"Missing keys reported by PyTorch: {load_msg.missing_keys}")
+        logger.info(f"Unexpected keys reported by PyTorch: {load_msg.unexpected_keys}")
+
+        if len(skipped_missing_key) > 0:
+            logger.info(f"Example missing-key skips: {skipped_missing_key[:10]}")
+
+        if len(skipped_shape_mismatch) > 0:
+            logger.info(f"Example shape mismatches: {skipped_shape_mismatch[:10]}")
+    else:
+        print(f"Loaded {len(filtered_state)} matching pretrained tensors")
+        print(f"Removed 'encoder.' prefix from {removed_prefix_count} keys")
+        print(f"Skipped {len(skipped_missing_key)} keys not found in current model")
+        print(f"Skipped {len(skipped_shape_mismatch)} keys with shape mismatch")
+        print(f"Missing keys reported by PyTorch: {load_msg.missing_keys}")
+        print(f"Unexpected keys reported by PyTorch: {load_msg.unexpected_keys}")
+
+        if len(skipped_missing_key) > 0:
+            print(f"Example missing-key skips: {skipped_missing_key[:10]}")
+
+        if len(skipped_shape_mismatch) > 0:
+            print(f"Example shape mismatches: {skipped_shape_mismatch[:10]}")
+
+    del checkpoint
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
