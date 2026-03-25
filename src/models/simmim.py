@@ -59,7 +59,7 @@ class SimMIM(nn.Module):
         self.decoder = nn.Sequential(
             nn.Conv2d(
                 in_channels=self.encoder.num_features,
-                out_channels=self.encoder_stride ** 2 * 3, kernel_size=1),
+                out_channels=self.encoder_stride ** 2 * self.in_chans, kernel_size=1),
             nn.PixelShuffle(self.encoder_stride)
         )
         
