@@ -12,13 +12,13 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 from timm.utils import AverageMeter
-from config import get_config
-from models import build_model
-from data import build_loader # TODO add __init__.py in data/ for pretrain and finetune loader
+from src.config import get_config
+from src.models import build_model
+from src.data import build_loader # TODO add __init__.py in data/ for pretrain and finetune loader
 from lr_scheduler import build_scheduler # TODO not implemented yet
-from optimizer import build_optimizer
-from logger import create_logger
-from utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper
+from src.optimizer import build_optimizer
+from src.logger import create_logger
+from src.utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper
 
 
 # we probably dont need "from apex import amp" (used for mixed precision. it's outdated, and we probably not need it for our model to work)
@@ -100,7 +100,7 @@ def parse_option():
 
 
 def main(config):
-    data_loader_train = build_loader(config, logger, is_train=True)
+    data_loader_train = build_loader(config, logger, is_pretrain=True)
     
     logger.info(f"Creating model: {config.MODEL.TYPE}/{config.MODEL.NAME}")
     model = build_model(config, is_pretrain=True)

@@ -1,0 +1,2 @@
+from .data_simmim import build_loader_simmim
+from .data_finetune import build_loader_finetune
