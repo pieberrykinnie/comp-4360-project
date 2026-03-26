@@ -275,6 +275,93 @@ def train_one_epoch(conig, model, criterion, data_loader, optimizer, epoch, mixu
     logger.info(f"EPOCH {epoch} traning takes {datetime.timedelta(seconds=int(epoch_time))}")
 
 
+# measure how well the fine tuned chexpert model is doing
+@torch.no_grad() # for efficiency, validate doesnt track gradients since there is no back propagation
+def validate(config, data_loader, model):
+    # BCEWithLogitsLoss combines sigmoid and binary cross entropy
+    # (expects raw logits from the model)
+    criterion = nn.BCEWithLogitsLoss() # loss used for multi label classification in checpert
+    model.eval()
+    
+    # batch_time.val stores time for current batch
+    # batch_time.avg stores average time so far
+    batch_time = AverageMeter()
+    # loss_meter.val stores the current reduced loss
+    # loss_meter.avg stores the average validation loss across all samples
+    loss_meter = AverageMeter()
+    
+    all_probs = []      # collect probabilities/predictions from all batches
+    all_targets = []    # collect true labels from all batches
+
+    start = time.time()
+    # idx is the batch index
+    # each batch contains input chest xray images, and multilabel vector for each image (0,1 classificatin for all 14 pathologies)
+    # target might look like this: [1,0,0,1,1,0,0,0,0,0,0,0,0,0] (14D vector for 14 classes/pathologies)
+    for idx, (images, targets) in enumerate(data_loader):
+        # move data to GPU memory
+        images = images.cuda(non_blocking=True)
+        targets = targets.float().cuda(non_blocking=True)
+        # logits are raw scores for the 14 classifications (for 1 image) before sigmoid
+        logits = model(images)
+        # our loss, compares the predicted logits by the model with the true multilabel targets
+        loss = criterion(logits, targets)
+        
+        # if validation is running on multiple GPUs, each GPU computes its own batch loss
+        # reduced_loss is the average loss across all GPUs for a batch
+        reduced_loss = reduce_tensor(loss)
+        # update loss average (weighted by number of samples in the batch)
+        loss_meter.update(reduced_loss.item(), targets.size(0))
+        
+        # convert logits to probabilities (between 0 and 1, inclusive) for AUROC
+        probs = torch.sigmoid(logits)
+        
+        # store predicted probabilities and true labels for every batch
+        # move back to CPU (for AUROC/scikit-learn)
+        all_probs.append(probs.cpu())
+        all_targets.append(targets.cpu())
+        
+        end = time.time()
+        batch_time.update(end - start)
+        start = end
+        if idx % config.PRINT_FREQ == 0:                                            # logs every "PRINT_FREQ" batches
+            memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)     # converts max allocated Bytes to MB
+            logger.info(
+                f'Test: [{idx}/{len(data_loader)}]\t'
+                f'Time {batch_time.val:.3f} (avg {batch_time.avg:.3f})\t'
+                f'Loss {loss_meter.val:.4f} (avg {loss_meter.avg:.4f})\t'
+                f'Mem {memory_used:.0f}MB'
+            )
+    # list of tensors, one tensor per batch
+    # concatenate all stored tensors from each batch to make one big tensor (number of examples, 14 classes) for the whole dataset
+    # then convert to numpy arrays (for scikit-learn)
+    # so now we have one big np array of probabilities, and one of true labels
+    all_probs = torch.cat(all_probs, dim=0).numpy()
+    all_targets = torch.cat(all_targets, dim=0).numpy()
+    
+    per_class_auc = []                      # store AUROC for each pathology
+    for c in range(all_targets.shape[1]):   # loop over all 14 classes
+        # extract one class (one column == one pathology) at a time
+        y_true = all_targets[:, c]      # true label for that class/pathology across the whole set
+        y_score = all_probs[:, c]       # predicted probabilities for that class across the whole set
+        # roc_auc_score needs both positive and negative examples, otherwise just stores nan for that class
+        if len(np.unique(y_true)) < 2:
+            per_class_auc.append(float("nan"))
+        else:
+            # for one class/pathology, roc_auc_score measures how well the model
+            # ranks positive (contains pathology) images higher than negative images
+            # its basically the % of correct rankings, where correct means disease image
+            # has lower probability than non disease image
+            per_class_auc.append(roc_auc_score(y_true, y_score))
+    # averages the AUROC per class (ignores class with nan)
+    # mean AUROC = overall model performance across all diseases (high means model is good overall)
+    mean_auc = float(np.nanmean(per_class_auc))
+    
+    logger.info(f'Mean AUROC {mean_auc:.4f}')
+    logger.info(f'Per-class AUROC {per_class_auc}')
+
+    return mean_auc, loss_meter.avg, per_class_auc
+
+
 if __name__ == '__main__':
     args, config = parse_option()
     logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
