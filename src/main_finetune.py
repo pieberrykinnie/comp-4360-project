@@ -259,7 +259,7 @@ def train_one_epoch(conig, model, criterion, data_loader, optimizer, epoch, mixu
         start = end
         
         if idx % config.PRINT_FREQ == 0:
-            lr = optimzer.param_groups[-1]['lr']
+            lr = optimizer.param_groups[-1]['lr']
             memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
             etas = batch_time.avg * (num_steps - idx)
             logger.info(
