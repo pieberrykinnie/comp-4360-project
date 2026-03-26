@@ -77,9 +77,9 @@ def parse_option():
     parser.add_argument(
         '--amp-opt-level',
         type=str,
-        default='00',
-        choices=['00', '01', '02'],
-        help="mixed precision opt level, if 00, no amp is used"
+        default='O0',
+        choices=['O0', 'O1', 'O2'],
+        help="mixed precision opt level, if O0, no amp is used"
     )
     parser.add_argument(
         '--output',
@@ -125,7 +125,7 @@ def main(config):
     
     # check this chunk works with data_finetune
     optimizer = build_optimizer(config, model, logger, is_train=False)
-    if config.AMP_OPT_LEVEL == '00' and amp is not None:
+    if config.AMP_OPT_LEVEL == 'O0' and amp is not None:
         model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
     model_without_ddp = model.module
@@ -214,7 +214,7 @@ def train_one_epoch(conig, model, criterion, data_loader, optimizer, epoch, mixu
         if config.TRAIN.ACCUMULATION_STEPS > 1:
             loss = criterion(outputs, targets)
             loss = loss / config.TRAIN.ACCUMULATION_STEPS
-            if config.AMP_OPT_LEVEL != '00':
+            if config.AMP_OPT_LEVEL != 'O0':
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
                 if config.TRAIN.CLIP_GRAD:
@@ -234,7 +234,7 @@ def train_one_epoch(conig, model, criterion, data_loader, optimizer, epoch, mixu
         else:
             loss = criterion(outputs, targets)
             optimizer.zero_grad()
-            if config.AMP_OPT_LEVEL != '00':
+            if config.AMP_OPT_LEVEL != 'O0':
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
                 if config.TRAIN.CLIP_GRAD:
@@ -387,4 +387,68 @@ def throughput(data_loader, model, logger):
 
 if __name__ == '__main__':
     args, config = parse_option()
+
+    if config.AMP_OPT_LEVEL != "O0":
+        assert amp is not None, "amp not installed. Note: make sure config.AMP_OPT_LEVEL == 'O0', from apex import amp is outdated. If we really want amp, we can use pyTorch's."
+
+    # RANK is the ID of the current process (GPU), WORLD_SIZE is the total number of processes (GPUs) participating
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ["RANK"])
+        world_size = int(os.environ['WORLD_SIZE'])
+        print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
+    else:
+        rank = -1
+        world_size = -1
+        
+    torch.cuda.set_device(config.LOCAL_RANK)        # choose the GPU to use (LOCAL_RANK = 1 -> GPU 1)
+    # helps distributed GPUs talk to each other (we will probably just use one GPU anyway)
+    torch.distributed.init_process_group(
+        backend='nccl',
+        init_method='env://',
+        world_size=world_size,
+        rank=rank
+        )
+    torch.distributed.barrier()                     # wait here until all GPUs/processes are synchronized
+
+    # set random seeds
+    seed = config.SEED + dist.get_rank() # dist.get_rank() so seeds are not identical among GPUs
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    cudnn.benchmark = True
+
+    # linear scale the learning rate according to total batch size, may not be optimal
+    # 512 is the reference batch size original paper tuned the learning rate for
+    original_reference_batch_size = 512.0 # not using (from original paper, trained on imagenet)
+    # using 32 since chexpert is significantly smaller than imagenet (original paper dataset)
+    # can change depending on the learning rate
+    reference_batch_size = 32.0
+    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
+    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
+    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
+    
+    # gradient accumulation also need to scale the learning rate
+    if config.TRAIN.ACCUMULATION_STEPS > 1:
+        linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS
+        linear_scaled_warmup_lr = linear_scaled_warmup_lr * config.TRAIN.ACCUMULATION_STEPS
+        linear_scaled_min_lr = linear_scaled_min_lr * config.TRAIN.ACCUMULATION_STEPS
+    
+    # update the LR values
+    config.defrost()
+    config.TRAIN.BASE_LR = linear_scaled_lr
+    config.TRAIN.WARMUP_LR = linear_scaled_warmup_lr
+    config.TRAIN.MIN_LR = linear_scaled_min_lr
+    config.freeze()
+
+    os.makedirs(config.OUTPUT, exist_ok=True)
     logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
+
+    if dist.get_rank() == 0: # to avoid duplicates from other GPUs if they exist
+        path = os.path.join(config.OUTPUT, "config.json")
+        with open(path, "w") as f:
+            f.write(config.dump())
+        logger.info(f"Full config saved to {path}")
+
+    # print config
+    logger.info(config.dump())
+
+    main(config)
