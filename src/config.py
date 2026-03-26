@@ -1,16 +1,41 @@
 from abc import ABC
 from argparse import Namespace
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict, is_dataclass
 from pathlib import Path
 import os
 import yaml
 
 
 class ConfigObject(ABC):
-    """
-    Abstract class denoting a configuration object.
-    """
-    pass
+
+    def defrost(self):
+        return self
+
+    def freeze(self):
+        return self
+
+    def dump(self):
+
+        def convert_value(value):
+            if is_dataclass(value):
+                return {k: convert_value(v) for k, v in asdict(value).items()}
+
+            if isinstance(value, dict):
+                return {k: convert_value(v) for k, v in value.items()}
+
+            if isinstance(value, list):
+                return [convert_value(v) for v in value]
+
+            if isinstance(value, tuple):
+                return [convert_value(v) for v in value]
+
+            if isinstance(value, Path):
+                return str(value)
+
+            return value
+
+        config_dict = convert_value(self)
+        return yaml.safe_dump(config_dict, sort_keys=False)
 
 
 @dataclass

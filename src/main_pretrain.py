@@ -56,7 +56,7 @@ def parse_option():
         help="resume from checkpoint",
     )
     parser.add_argument(
-        '--accumumlation-steps',
+        '--accumulation-steps',
         type=int,
         help="gradient accumulation steps",
     )
@@ -103,16 +103,19 @@ def main(config):
     data_loader_train = build_loader(config, logger, is_train=True)
     
     logger.info(f"Creating model: {config.MODEL.TYPE}/{config.MODEL.NAME}")
-    model = build_model(config, is_train=True)
+    model = build_model(config, is_pretrain=True)
     model.cuda()
     logger.info(str(model))
     
-    optimizer = build_optimizer(config, model, logger, is_train=True)
+    optimizer = build_optimizer(config, model, logger, is_pretrain=True)
     if config.AMP_OPT_LEVEL != "O0" and amp != None:
         model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
-    model = torch.nn.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
-    model_without_ddp = model.module
-    
+    if distributed:
+        model = torch.nn.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
+        model_without_ddp = model.module
+    else:
+        model_without_ddp = model
+
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"number of params: {n_parameters}")
     
@@ -145,7 +148,9 @@ def main(config):
         data_loader_train.sampler.set_epoch(epoch)
         
         train_one_epoch(config, model, data_loader_train, optimizer, epoch, lr_scheduler)
-        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+        if (not dist.is_available() or not dist.is_initialized() or dist.get_rank() == 0) and (
+            epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)
+        ):
             save_checkpoint(config, epoch, model_without_ddp, 0., optimizer, lr_scheduler, logger)
         
     total_time = time.time() - start_time
@@ -225,6 +230,8 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
         torch.cuda.synchronize() # waits for the GPU to finish work before continuing
         
         loss_meter.update(loss.item(), img.size(0)) # tracks batch loss, weighted by batch size
+        if torch.is_tensor(grad_norm):
+            grad_norm = grad_norm.item()
         norm_meter.update(grad_norm)                # stores the latest gradient norm
         end = time.time()
         batch_time.update(end - start)
@@ -264,12 +271,24 @@ if __name__ == '__main__':
     else:
         rank = -1
         world_size = -1
+    distributed = (rank != -1 and world_size != -1)
     
     torch.cuda.set_device(config.LOCAL_RANK)    # choose the GPU to use (LOCAL_RANK = 1 -> GPU 1)
-    torch.distributed.barrier()                 # wait here until all GPUs/processes are synchronized
+    if distributed:
+        dist.init_process_group(
+            backend="nccl",
+            init_method="env://",
+            world_size=world_size,
+            rank=rank
+        )
+        dist.barrier()                 
+
+    global_rank = dist.get_rank() if distributed else 0
+    actual_world_size = dist.get_world_size() if distributed else 1
     
     # set random seeds
-    seed = config.SEED + dist.get_rank() # dist.get_rank() so seeds are not identical among GPUs
+    global_rank = dist.get_rank() if distributed else 0
+    seed = config.SEED + global_rank # dist.get_rank() so seeds are not identical among GPUs
     torch.manual_seed(seed)
     np.random.seed(seed)
     cudnn.benchmark = True
@@ -280,9 +299,10 @@ if __name__ == '__main__':
     # using 32 since chexpert is significantly smaller than imagenet (original paper dataset)
     # can change depending on the learning rate
     reference_batch_size = 32.0
-    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
-    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
-    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
+    actual_world_size = dist.get_world_size() if distributed else 1
+    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * actual_world_size / reference_batch_size
+    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * actual_world_size / reference_batch_size
+    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * actual_world_size / reference_batch_size
     
     # gradient accumulation also need to scale the learning rate
     if config.TRAIN.ACCUMULATION_STEPS > 1:
@@ -298,9 +318,9 @@ if __name__ == '__main__':
     config.freeze()
 
     os.makedirs(config.OUTPUT, exist_ok=True)
-    logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
+    logger = create_logger(output_dir=config.OUTPUT, dist_rank=global_rank, name=f"{config.MODEL.NAME}")
     
-    if dist.get_rank() == 0: # to avoid duplicates from other GPUs if they exist
+    if global_rank == 0: # to avoid duplicates from other GPUs if they exist
         path = os.path.join(config.OUTPUT, "config.json")
         with open(path, "w") as f:
             f.write(config.dump())
