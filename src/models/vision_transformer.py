@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
-class Mlp(nn.module):
+class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
         super().__init__()
         out_features = out_features or in_features
@@ -53,10 +53,11 @@ class Attention(nn.Module):
             ) # 2*Wh-1 * 2*Ww-1, nH
             
             coords_h = torch.arange(window_size[0])
-            coords_w = torch.arrange(window_size[1])
-            coords = torch.stack(torch.meshgrid([coords_h, coords_w])) # 2, Wh, Ww
-            coords_flatten = torch.flatten(coords, 1) # 2, Wh*Ww
-            relative_coords = relative_coords.permute(1,2,0).contiguous() # 2, Wh*Ww, Wh*Ww
+            coords_w = torch.arange(window_size[1])
+            coords = torch.stack(torch.meshgrid([coords_h, coords_w], indexing="ij"))
+            coords_flatten = torch.flatten(coords, 1)
+            relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]
+            relative_coords = relative_coords.permute(1, 2, 0).contiguous()
             relative_coords[:, :, 0] += window_size[0] - 1
             relative_coords[:, :, 1] += window_size[1] - 1
             relative_coords[:, :, 0] *= 2 * window_size[1] - 1
@@ -87,7 +88,7 @@ class Attention(nn.Module):
         q, k, v = qkv[0], qkv[1], qkv[2]
         
         q = q * self.scale
-        attn = (q @ q.transpose(-2, -1))
+        attn = (q @ k.transpose(-2, -1))
         
         if self.relative_position_bias_table is not None:
             relative_position_bias = \
@@ -112,18 +113,18 @@ class Attention(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=-4., qkv_bias=False, qk_scale=None, drop=0.,
+    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0.,
                 attn_drop=0., drop_path=0., init_values=None, act_layer=nn.GELU, norm_layer=nn.LayerNorm,
                 window_size=None, attn_head_dim=None):
         super().__init__()
-        self.normal = norm_layer(dim)
+        self.norm1 = norm_layer(dim)
         self.attn = Attention(
             dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
             attn_drop=attn_drop, proj_drop=drop, window_size=window_size, attn_head_dim=attn_head_dim)
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_feature=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
         
         if init_values is not None:
             self.gamma_1 = nn.Parameter(init_values * torch.ones((dim)), requires_grad=True)
@@ -176,8 +177,8 @@ class RelativePositionBias(nn.Module):
         # cls to token & token 2 clas & cls to cls
         
         # get pair-wise relative position index for each toekn inside window
-        coords_h = torch.arrange(window_size[0])
-        coords_w = torch.arrange(window_size[1])
+        coords_h = torch.arange(window_size[0])
+        coords_w = torch.arange(window_size[1])
         coords = torch.stack(torch.meshgrid([coords_h, coords_w]))
         coords_flatten = torch.flatten(coords, 1)
         relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]
@@ -186,7 +187,7 @@ class RelativePositionBias(nn.Module):
         relative_coords[:, :, 1] += window_size[1] - 1
         relative_coords[:, :, 0] *= 2 * window_size[1] - 1
         relative_position_index = \
-            torch.zeros(size=(window_size[1] * window_size[1] + 1,) * 2, dtype=relative_coords.dtype)
+            torch.zeros(size=(window_size[0] * window_size[1] + 1,) * 2, dtype=relative_coords.dtype)
         relative_position_index[1:, 1:] = relative_coords.sum(-1)
         relative_position_index[0, 0:] = self.num_relative_distance - 3
         relative_position_index[0:, 0] = self.num_relative_distance - 2
@@ -208,7 +209,7 @@ class VisionTransformer(nn.Module):
                 drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None,
                 use_abs_pos_emb=True, use_rel_pos_bias=False, use_shared_rel_pos_bias=False,
                 use_mean_pooling=True, init_scale=0.001):
-        super().__init()
+        super().__init__()
         self.num_classes = num_classes
         self.num_features = self.embed_dim = embed_dim
         self.patch_size = patch_size
@@ -321,7 +322,7 @@ class VisionTransformer(nn.Module):
 
 def build_vit(config):
     model = VisionTransformer(
-        ing_size=config.DATA.IMG_SIZE,
+        img_size=config.DATA.IMG_SIZE,
         patch_size=config.MODEL.VIT.PATCH_SIZE,
         in_chans=config.MODEL.VIT.IN_CHANS,
         num_classes=config.MODEL.NUM_CLASSES,
