@@ -88,32 +88,35 @@ def create_adamw_optimizer(group_param, learning_rate, betas =(0.9, 0.999), eps=
 
     return optimizer
 
-def build_optimizer(model, learning_rate, weight_decay, betas =(0.9, 0.999), eps=1e-8, logger=None):
-   
-    decay_params = []
-    no_decay_params = []
+def build_optimizer(config, model, logger=None, is_pretrain=True):
 
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        if should_use_weight_decay(name, param):
-            no_decay_params.append(param)
-        else:
-            decay_params.append(param)
+    learning_rate = config.TRAIN.BASE_LR
+    weight_decay = config.TRAIN.WEIGHT_DECAY
+    betas = config.TRAIN.OPTIMIZER.BETAS
+    eps = config.TRAIN.OPTIMIZER.EPS
+    optimizer_name = config.TRAIN.OPTIMIZER.NAME.lower()
 
-    if logger is not None:
-        logger.info(f"Optimizer grouping:")
-        logger.info(f"decay params: {len(decay_params)} tensors, wd={weight_decay}")
-        logger.info(f"no_decay params: {len(no_decay_params)} tensors, wd=0.0")
+    if optimizer_name != "adamw":
+        raise ValueError(
+            f"This project optimizer.py currently only supports AdamW, "
+            f"but got OPTIMIZER.NAME = '{config.TRAIN.OPTIMIZER.NAME}'"
+        )
 
-    group_param = [
-        {'params': decay_params, 'weight_decay': float(weight_decay)},
-        {'params': no_decay_params, 'weight_decay': 0.0}
-    ]
+    if is_pretrain:
+        if logger is not None:
+            logger.info("Building optimizer for pretraining")
+        group_param = build_pretrain_param_groups(model, weight_decay, logger)
+    else:
+        if logger is not None:
+            logger.info("Building optimizer for fine-tuning")
+        group_param = build_finetune_param_groups(model, weight_decay, logger)
 
-    optimizer = torch.optim.AdamW(group_param, lr=float(learning_rate), betas=betas, eps=float(eps))
-
-    if logger is not None:
-        logger.info(f" created the adamw optimizer with lr={learning_rate}, weight_decay={weight_decay}, betas={betas}, eps={eps}")
+    optimizer = create_adamw_optimizer(
+        group_param=group_param,
+        learning_rate=learning_rate,
+        betas=betas,
+        eps=eps,
+        logger=logger
+    )
 
     return optimizer
