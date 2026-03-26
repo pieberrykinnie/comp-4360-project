@@ -275,6 +275,7 @@ def train_one_epoch(conig, model, criterion, data_loader, optimizer, epoch, mixu
     logger.info(f"EPOCH {epoch} traning takes {datetime.timedelta(seconds=int(epoch_time))}")
 
 
+# Warning: probs/targets (322-323) stay on local GPU so, currently AUROC here is per local GPU, not global AUROC
 # measure how well the fine tuned chexpert model is doing
 @torch.no_grad() # for efficiency, validate doesnt track gradients since there is no back propagation
 def validate(config, data_loader, model):
@@ -317,6 +318,7 @@ def validate(config, data_loader, model):
         
         # store predicted probabilities and true labels for every batch
         # move back to CPU (for AUROC/scikit-learn)
+        # TODO make AUROC computation distributed, i.e., collect probs/targets from all running processes/GPUs before AUROC
         all_probs.append(probs.cpu())
         all_targets.append(targets.cpu())
         
@@ -360,6 +362,9 @@ def validate(config, data_loader, model):
     logger.info(f'Per-class AUROC {per_class_auc}')
 
     return mean_auc, loss_meter.avg, per_class_auc
+
+
+
 
 
 if __name__ == '__main__':
