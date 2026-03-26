@@ -68,9 +68,9 @@ def parse_option():
     parser.add_argument(
         '--amp-opt-level',
         type=str,
-        default='00', # does not use mixed precision with amp by default
-        choices=['00', '01', '02'],
-        help="Mixed precision opt level, if 00, no amp is used",
+        default='O0', # does not use mixed precision with amp by default
+        choices=['O0', 'O1', 'O2'],
+        help="Mixed precision opt level, if O0, no amp is used",
     )
     parser.add_argument(
         '--output',
@@ -108,7 +108,7 @@ def main(config):
     logger.info(str(model))
     
     optimizer = build_optimizer(config, model, logger, is_train=True)
-    if config.AMP_OPT_LEVEL != "00" and amp != None:
+    if config.AMP_OPT_LEVEL != "O0" and amp != None:
         model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
     model = torch.nn.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
     model_without_ddp = model.module
@@ -179,9 +179,9 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
         if config.TRAIN.ACCUMULATION_STEPS > 1:
             loss = loss / config.TRAIN.ACCUMULATION_STEPS # if # accumulation steps is mm then each batch should contribute only 1/mm to the loss
             # trying to use automatic mixed precision (compute gradients in lower precision training faster and uses less memory)
-            # depends on Apex for AMP which has not been installed (it's outdated), so defaults to AMP_OPT_LEVEL = "00"
+            # depends on Apex for AMP which has not been installed (it's outdated), so defaults to AMP_OPT_LEVEL = "O0"
             # we shouldnt need it anyway
-            if config.AMP_OPT_LEVEL != "00":
+            if config.AMP_OPT_LEVEL != "O0":
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
                 
@@ -206,7 +206,7 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
                 lr_scheduler.step_update(epoch * num_steps + idx)   # updates learning rate according to scheduler
         else: # no gradient accumulation (update weights after every batch)
             optimizer.zero_grad()
-            if config.AMP_OPT_LEVEL != "00":
+            if config.AMP_OPT_LEVEL != "O0":
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
                 if config.TRAIN.CLIP_GRAD:
@@ -253,8 +253,8 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
 if __name__ == '__main__':
     args, config = parse_option()
     
-    if config.AMP_OPT_LEVEL != "00":
-        assert amp is not None, "amp not installed. Note: make sure config.AMP_OPT_LEVEL == '00', from apex import amp is outdated. If we really want amp, we can use pyTorch's."
+    if config.AMP_OPT_LEVEL != "O0":
+        assert amp is not None, "amp not installed. Note: make sure config.AMP_OPT_LEVEL == 'O0', from apex import amp is outdated. If we really want amp, we can use pyTorch's."
     
     # RANK is the ID of the current process (GPU), WORLD_SIZE is the total number of processes (GPUs) participating
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
