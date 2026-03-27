@@ -31,6 +31,15 @@ def build_scheduler(config: Config, optimizer: Optimizer, n_iter_per_epoch: int)
             cycle_limit=1,
             t_in_epochs=False,
         )
+    elif scheduler_name == "linear":
+        lr_scheduler = LinearLRScheduler(
+            optimizer,
+            t_initial=num_steps,
+            lr_min_rate=0.01,
+            warmup_lr_init=config.TRAIN.WARMUP_LR,
+            warmup_t=warmup_steps,
+            t_in_epochs=False,
+        )
     elif scheduler_name == "step":
         lr_scheduler = StepLRScheduler(
             optimizer,
@@ -46,3 +55,68 @@ def build_scheduler(config: Config, optimizer: Optimizer, n_iter_per_epoch: int)
         )
 
     return lr_scheduler
+
+
+class LinearLRScheduler(Scheduler):
+    t_initial: int
+    lr_min_rate: float
+    warmup_t: int
+    warmup_lr_init: float
+    t_in_epochs: bool
+    warmup_steps: list[float]
+
+    def __init__(
+        self,
+        optimizer: Optimizer,
+        t_initial: int,
+        lr_min_rate: float,
+        warmup_t: int = 0,
+        warmup_lr_init: float = 0.,
+        t_in_epochs: bool = True,
+        noise_range_t: list[int] | tuple[int, int] | int | None = None,
+        noise_pct: float = 0.67,
+        noise_std: float = 1.0,
+        noise_seed: int = 42,
+        initialize: bool = True,
+    ) -> None:
+        super().__init__(
+            optimizer,
+            param_group_field="lr",
+            noise_range_t=noise_range_t,
+            noise_pct=noise_pct,
+            noise_std=noise_std,
+            noise_seed=noise_seed,
+            initialize=initialize
+        )
+
+        self.t_initial = t_initial
+        self.lr_min_rate = lr_min_rate
+        self.warmup_t = warmup_t
+        self.warmup_lr_init = warmup_lr_init
+        self.t_in_epochs = t_in_epochs
+
+        if self.warmup_t != 0:
+            self.warmup_steps = [(v - warmup_lr_init) /
+                                 self.warmup_t for v in self.base_values]
+            super().update_groups(self.warmup_lr_init)
+        else:
+            self.warmup_steps = [1 for _ in self.base_values]
+
+    def _get_lr(self, t: int) -> list[float]:
+        lrs: list[float]
+
+        if t < self.warmup_t:
+            lrs = [self.warmup_lr_init + t * s for s in self.warmup_steps]
+        else:
+            t = t - self.warmup_t
+            total_t: int = self.t_initial - self.warmup_t
+            lrs = [v - ((v - v * self.lr_min_rate) * (t / total_t))
+                   for v in self.base_values]
+
+        return lrs
+
+    def get_epoch_values(self, epoch: int) -> list[float] | None:
+        return self._get_lr(epoch) if self.t_in_epochs else None
+
+    def get_update_values(self, num_updates: int) -> list[float] | None:
+        return self._get_lr(num_updates) if not self.t_in_epochs else None
