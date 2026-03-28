@@ -85,7 +85,8 @@ class CheXpertFineTuneDataset(Dataset):
 
             for label_name in CHEXPERT_LABELS:
                 if label_name not in reader.fieldnames:
-                    raise ValueError(f"Missing label column '{label_name}' in CSV: {csv_path}")
+                    raise ValueError(
+                        f"Missing label column '{label_name}' in CSV: {csv_path}")
 
             for row in reader:
                 if frontal_only:
