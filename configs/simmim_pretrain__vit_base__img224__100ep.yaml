@@ -27,6 +27,7 @@ TRAIN:
     NAME: 'multistep'
     GAMMA: 0.1
     MULTISTEPS: [700,]
+AMP_OPT_LEVEL: "O1"
 PRINT_FREQ: 100
 SAVE_FREQ: 5
 TAG: simmim_pretrain__vit_base__img224__100ep
