@@ -350,10 +350,16 @@ def _update_config_from_args(config: Config, args: Namespace) -> None:
         )
 
     def _check_args(name: str) -> bool:
-        """
-        Check if the argument exists and is set.
-        """
-        return getattr(args, name, None) is not None
+
+        if not hasattr(args, os.name):
+            return False
+
+        value = getattr(args, os.name)
+
+        if isinstance(value, bool):
+            return value
+
+        return value is not None
 
     # Merge from specific arguments
     if _check_args("batch_size"):
