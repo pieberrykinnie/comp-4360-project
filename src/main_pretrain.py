@@ -348,6 +348,13 @@ if __name__ == '__main__':
         world_size = -1
     distributed = (rank != -1 and world_size != -1)
 
+    # Read LOCAL_RANK from the environment (populated by torchrun)
+    if 'LOCAL_RANK' in os.environ:
+        local_rank = int(os.environ['LOCAL_RANK'])
+        config.defrost()
+        config.LOCAL_RANK = local_rank
+        config.freeze()
+
     # choose the GPU to use (LOCAL_RANK = 1 -> GPU 1)
     torch.cuda.set_device(config.LOCAL_RANK)
     if distributed:
