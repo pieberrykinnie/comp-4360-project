@@ -15,7 +15,7 @@ from timm.utils import AverageMeter
 from src.config import get_config
 from src.models import build_model
 from src.data import build_loader # TODO add __init__.py in data/ for pretrain and finetune loader
-from lr_scheduler import build_scheduler # TODO not implemented yet
+from src.lr_scheduler import build_scheduler # TODO not implemented yet
 from src.optimizer import build_optimizer
 from src.logger import create_logger
 from src.utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper
@@ -89,7 +89,7 @@ def parse_option():
     parser.add_argument(
         '--local-rank',
         type=int,
-        required=True,
+        default=0,
         help="local rank for DistributedDataParallel",
     )
     
