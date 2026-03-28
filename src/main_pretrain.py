@@ -8,7 +8,7 @@ import datetime
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 import torch.distributed as dist
 from timm.utils import AverageMeter
 import sys
@@ -163,13 +163,13 @@ def main(config):
         data_loader_train.sampler.set_epoch(epoch)
 
         train_one_epoch(config, model, data_loader_train,
-                        optimizer, epoch, lr_scheduler)
+                        optimizer, epoch, lr_scheduler,
+                        scaler, use_amp)
         if (not dist.is_available() or not dist.is_initialized() or dist.get_rank() == 0) and (
             epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)
         ):
             save_checkpoint(config, epoch, model_without_ddp,
-                            0., optimizer, lr_scheduler, logger,
-                            scaler, use_amp)
+                            0., optimizer, lr_scheduler, logger)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
