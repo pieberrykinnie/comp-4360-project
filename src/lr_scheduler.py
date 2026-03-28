@@ -3,7 +3,7 @@ from timm.scheduler.cosine_lr import CosineLRScheduler
 from timm.scheduler.step_lr import StepLRScheduler
 from timm.scheduler.scheduler import Scheduler
 
-from config import Config
+from src.config import Config
 from torch.optim import Optimizer
 
 
