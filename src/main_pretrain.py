@@ -2,6 +2,15 @@
 # This file is mostly the same as the original repo
 # ------
 
+import time
+import argparse
+import datetime
+import numpy as np
+import torch
+import torch.backends.cudnn as cudnn
+from torch.cuda.amp import GradScaler
+import torch.distributed as dist
+from timm.utils import AverageMeter
 import sys
 import os
 
@@ -9,22 +18,14 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-import time
-import argparse
-import datetime
-import numpy as np
-import torch
-import torch.backends.cudnn as cudnn
-import torch.distributed as dist
-from timm.utils import AverageMeter
 from src.config import get_config
 from src.models import build_model
-# TODO add __init__.py in data/ for pretrain and finetune loader
 from src.data import build_loader
-from src.lr_scheduler import build_scheduler  # TODO not implemented yet
+from src.lr_scheduler import build_scheduler
 from src.optimizer import build_optimizer
 from src.logger import create_logger
 from src.utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper
+# TODO add __init__.py in data/ for pretrain and finetune loader
 
 
 # we probably dont need "from apex import amp" (used for mixed precision. it's outdated, and we probably not need it for our model to work)
@@ -115,9 +116,10 @@ def main(config):
     logger.info(str(model))
 
     optimizer = build_optimizer(config, model, logger, is_pretrain=True)
-    if config.AMP_OPT_LEVEL != "O0" and amp != None:
-        model, optimizer = amp.initialize(
-            model, optimizer, opt_level=config.AMP_OPT_LEVEL)
+
+    use_amp = config.AMP_OPT_LEVEL != "O0"
+    scaler = GradScaler(enabled=use_amp)
+
     if distributed:
         model = torch.nn.DistributedDataParallel(
             model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
@@ -166,14 +168,15 @@ def main(config):
             epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)
         ):
             save_checkpoint(config, epoch, model_without_ddp,
-                            0., optimizer, lr_scheduler, logger)
+                            0., optimizer, lr_scheduler, logger,
+                            scaler, use_amp)
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     logger.info(f"Training time {total_time_str}")
 
 
-def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
+def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler, scaler, use_amp):
     model.train()
     optimizer.zero_grad()  # clear old gradients
 
@@ -192,8 +195,46 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
 
         # forward pass
         # loss calculation does not need "targets" (labels) for pretraining
-        loss = model(img, mask)
+        with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=use_amp):
+            loss = model(img, mask)
+            if config.TRAIN.ACCUMULATION_STEPS > 1:
+                loss = loss / config.TRAIN.ACCUMULATION_STEPS
 
+        # Scale the loss and call backward
+        scaler.scale(loss).backward()
+
+        if config.TRAIN.ACCUMULATION_STEPS > 1:
+            if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
+                # unscale gradients before clipping
+                if config.TRAIN.CLIP_GRAD:
+                    scaler.unscale_(optimizer)
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), config.TRAIN.CLIP_GRAD)
+                else:
+                    scaler.unscale_(optimizer)
+                    grad_norm = get_grad_norm(model.parameters())
+
+                # Step the optimizer using the scaler
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+                lr_scheduler.step_update(epoch * num_steps + idx)
+        else:
+            # Same logic for non-accumulation runs
+            if config.TRAIN.CLIP_GRAD:
+                scaler.unscale_(optimizer)
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), config.TRAIN.CLIP_GRAD)
+            else:
+                scaler.unscale_(optimizer)
+                grad_norm = get_grad_norm(model.parameters())
+
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+            lr_scheduler.step_update(epoch * num_steps + idx)
+
+        """
         # gradient accumulation by dividing the total batch size into "ACCUMULATION_STEPS" smaller batches
         # and updating weights after all smaller batches are done
         # (update weights after every few smaller batches)
@@ -250,6 +291,7 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
                     grad_norm = get_grad_norm(model.parameters())
             optimizer.step()
             lr_scheduler.step_update(epoch * num_steps + idx)
+        """
 
         torch.cuda.synchronize()  # waits for the GPU to finish work before continuing
 
@@ -289,9 +331,6 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler):
 # setup the whole training environment if this file is directly run
 if __name__ == '__main__':
     args, config = parse_option()
-
-    if config.AMP_OPT_LEVEL != "O0":
-        assert amp is not None, "amp not installed. Note: make sure config.AMP_OPT_LEVEL == 'O0', from apex import amp is outdated. If we really want amp, we can use pyTorch's."
 
     # RANK is the ID of the current process (GPU), WORLD_SIZE is the total number of processes (GPUs) participating
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
