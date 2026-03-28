@@ -57,6 +57,10 @@ class ConfigData(ConfigObject):
     DATA_PATH: Path = ""
     CSV_PATH: Path = ""
     IMG_ROOT: Path = "" 
+    TRAIN_CSV_PATH: Path = ""
+    VAL_CSV_PATH: Path = ""
+    UNCERTAINTY_POLICY: str = "zeros"
+    FRONTAL_ONLY: bool = True
     DATASET: str = "imagenet"
     IMG_SIZE: int = 224
     INTERPOLATION: str = "bicubic"
