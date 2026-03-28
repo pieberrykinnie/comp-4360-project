@@ -1,5 +1,5 @@
 data/CheXpert-v1.0-small/
-
+output/simmim_pretrain
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -259,3 +259,4 @@ build/
 # macOS
 .DS_Stored
 .DS_Store
+output/
