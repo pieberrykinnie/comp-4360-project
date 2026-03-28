@@ -1,0 +1,71 @@
+BASE: [""]
+
+DATA:
+  BATCH_SIZE: 4
+  IMG_ROOT: data
+  TRAIN_CSV_PATH: data/CheXpert-v1.0-small/train.csv
+  VAL_CSV_PATH: data/CheXpert-v1.0-small/valid.csv
+  UNCERTAINTY_POLICY: zeros
+  FRONTAL_ONLY: true
+  IMG_SIZE: 224
+  PIN_MEMORY: true
+  NUM_WORKERS: 0
+
+MODEL:
+  TYPE: vit
+  NAME: chexpert_finetune
+  DROP_RATE: 0.0
+  DROP_PATH_RATE: 0.1
+  LABEL_SMOOTHING: 0.0
+  VIT:
+    PATCH_SIZE: 16
+    IN_CHANS: 1
+    EMBED_DIM: 768
+    DEPTH: 12
+    NUM_HEADS: 12
+    MLP_RATIO: 4
+    QKV_BIAS: true
+    INIT_VALUES: 0.1
+    USE_APE: false
+    USE_RPB: false
+    USE_SHARED_RPB: true
+    USE_MEAN_POOLING: false
+
+TRAIN:
+  START_EPOCH: 0
+  EPOCHS: 1
+  WARMUP_EPOCHS: 1
+  WEIGHT_DECAY: 0.05
+  BASE_LR: 5.0e-5
+  WARMUP_LR: 5.0e-7
+  MIN_LR: 5.0e-6
+  CLIP_GRAD: 5.0
+  AUTO_RESUME: false
+  ACCUMULATION_STEPS: 1
+  USE_CHECKPOINT: false
+  LR_SCHEDULER:
+    NAME: cosine
+  OPTIMIZER:
+    NAME: adamw
+    EPS: 1.0e-8
+    BETAS: [0.9, 0.999]
+
+AUG:
+  MIXUP: 0.0
+  CUTMIX: 0.0
+  CUTMIX_MINMAX: null
+  MIXUP_PROB: 0.0
+  MIXUP_SWITCH_PROB: 0.0
+  MIXUP_MODE: batch
+
+AMP_OPT_LEVEL: "O0"
+OUTPUT: output
+TAG: chexpert_finetune_smoke
+SAVE_FREQ: 1
+PRINT_FREQ: 10
+SEED: 0
+EVAL_MODE: false
+THROUGHPUT_MODE: false
+
+# Point this to your working pretraining checkpoint
+PRETRAINED: output/simmim_pretrain/smoke_test/ckpt_epoch_0.pth
