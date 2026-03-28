@@ -126,8 +126,8 @@ class ConfigModel(ConfigObject):
     SWIN: Swin Transformer parameters
     VIT: Vision Transformer parameters
     """
-    TYPE: str = "swin"
-    NAME: str = "swin_tiny_patch4_window7_224"
+    TYPE: str = "vit"
+    NAME: str = "simmim_pretrain"
     RESUME: Path = ""
     NUM_CLASSES: int = 1000
     DROP_RATE: float = 0.0
