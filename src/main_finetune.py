@@ -360,12 +360,9 @@ def validate(config, data_loader, model, criterion):
 
 if __name__ == "__main__":
     args, config = parse_option()
-
-    # This project is keeping AMP off for simplicity
     if config.AMP_OPT_LEVEL != "O0":
         raise ValueError("This fine-tuning script currently expects AMP_OPT_LEVEL = 'O0'")
 
-    # Check whether distributed training is active
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
@@ -401,7 +398,6 @@ if __name__ == "__main__":
     np.random.seed(seed)
     cudnn.benchmark = True
 
-    # Fine-tuning usually uses a smaller reference batch size than the original ImageNet setup
     reference_batch_size = 32.0
     linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * actual_world_size / reference_batch_size
     linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * actual_world_size / reference_batch_size
