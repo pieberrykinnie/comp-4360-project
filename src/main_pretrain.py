@@ -24,7 +24,7 @@ from src.data import build_loader
 from src.lr_scheduler import build_scheduler
 from src.optimizer import build_optimizer
 from src.logger import create_logger
-from src.utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper
+from src.utils import load_checkpoint, save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor
 # TODO add __init__.py in data/ for pretrain and finetune loader
 
 
@@ -121,7 +121,7 @@ def main(config):
     scaler = GradScaler(enabled=use_amp)
 
     if distributed:
-        model = torch.nn.DistributedDataParallel(
+        model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
         model_without_ddp = model.module
     else:
@@ -294,6 +294,12 @@ def train_one_epoch(config, model, data_loader, optimizer, epoch, lr_scheduler, 
         """
 
         torch.cuda.synchronize()  # waits for the GPU to finish work before continuing
+
+        # Reduce the loss across all processes
+        if dist.is_available() and dist.is_initialized():
+            reduced_loss = reduce_tensor(loss.data)
+        else:
+            reduced_loss = loss.data
 
         # tracks batch loss, weighted by batch size
         loss_meter.update(loss.item(), img.size(0))
