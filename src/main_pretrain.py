@@ -120,6 +120,8 @@ def main(config):
     use_amp = config.AMP_OPT_LEVEL != "O0"
     scaler = GradScaler(enabled=use_amp)
 
+    model.to(memory_format=torch.channels_last)
+
     if distributed:
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
