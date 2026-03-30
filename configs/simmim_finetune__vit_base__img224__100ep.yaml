@@ -11,6 +11,7 @@ MODEL:
     USE_SHARED_RPB: False
     USE_MEAN_POOLING: True
 DATA:
+  BATCH_SIZE: 116
   IMG_SIZE: 224
   TRAIN_CSV_PATH: "data/CheXpert-v1.0-small/train.csv"
   VAL_CSV_PATH: "data/CheXpert-v1.0-small/valid.csv"
