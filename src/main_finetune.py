@@ -130,14 +130,14 @@ def parse_option():
 
 def main(config):
     # TODO check mixup_fn
-    dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config, logger, is_train=False)
+    dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config, logger, is_pretrain=False)
     logger.info(f"Creating model: {config.MODEL.TYPE}/{config.MODEL.NAME}")
-    model = build_model(config, is_train=False)
+    model = build_model(config, is_pretrain=False)
     model.cuda()
     logger.info(str(model))
     
     # check this chunk works with data_finetune
-    optimizer = build_optimizer(config, model, logger, is_train=False)
+    optimizer = build_optimizer(config, model, logger, is_pretrain=False)
     if config.AMP_OPT_LEVEL == 'O0' and amp is not None:
         model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
@@ -250,8 +250,8 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, lr_
     epoch_start = time.time()
 
     for idx, (images, targets) in enumerate(data_loader):
-        images = images.to(device, non_blocking=use_cuda)
-        targets = targets.to(device, non_blocking=use_cuda)
+        images = images.cuda(non_blocking=True)
+        targets = targets.float().cuda(non_blocking=True)
 
         outputs = model(images)
         loss = criterion(outputs, targets)
