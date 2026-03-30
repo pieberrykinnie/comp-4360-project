@@ -3,6 +3,8 @@ import torch
 import torch.distributed as dist
 
 # this function is used to check if the distributed training is initialized
+
+
 def is_dist_initialized():
 
     if not dist.is_available():
@@ -13,6 +15,7 @@ def is_dist_initialized():
 
     return True
 
+
 def reduce_tensor(tensor):
     if not is_dist_initialized():
         return tensor
@@ -20,26 +23,30 @@ def reduce_tensor(tensor):
     reduced_tensor = tensor.clone()
     # here i am adding together the tensor vals
     dist.all_reduce(reduced_tensor, op=dist.ReduceOp.SUM)
-    #then do the avg
+    # then do the avg
     reduced_tensor /= dist.get_world_size()
     return reduced_tensor
 
-#doing this so we can compute the gradient norm for the model parameters
-#can help with detecting issues like exploding gradients during training
+# doing this so we can compute the gradient norm for the model parameters
+# can help with detecting issues like exploding gradients during training
+
+
 def get_grad_norm(parameters):
     total_norm = 0.0
-    #we looping through all the parameters
+    # we looping through all the parameters
     for p in parameters:
         if p.grad is not None:
             # we r computing the L2 norm of the gradients
             param_norm = p.grad.data.norm(2).item()
-            #squeare them
+            # squeare them
             total_norm += param_norm ** 2
-    #then we take the square root
+    # then we take the square root
     total_norm = total_norm ** 0.5
     return total_norm
 
-#i created this so we can save a checkpoint to disk
+# i created this so we can save a checkpoint to disk
+
+
 def save_checkpoint(config, epoch, model, max_accuracy, optimizer=None, lr_scheduler=None, logger=None):
     save_state = {
         "model": model.state_dict(),
@@ -69,8 +76,7 @@ def save_checkpoint(config, epoch, model, max_accuracy, optimizer=None, lr_sched
         print(f"Checkpoint saved: {save_path}")
 
 
-
-#this is so we can load a checkpoint from disk
+# this is so we can load a checkpoint from disk
 def load_checkpoint(config, model, optimizer=None, lr_scheduler=None, logger=None):
 
     load_path = config.MODEL.RESUME
@@ -108,6 +114,7 @@ def load_checkpoint(config, model, optimizer=None, lr_scheduler=None, logger=Non
 
     return max_accuracy
 
+
 def auto_resume_helper(output_dir, logger=None):
 
     if not os.path.isdir(output_dir):
@@ -131,12 +138,14 @@ def auto_resume_helper(output_dir, logger=None):
 
     return latest_checkpoint
 
+
 def load_pretrained(config, model, logger=None):
 
     load_path = config.PRETRAINED
 
     if not os.path.isfile(load_path):
-        raise FileNotFoundError(f"Pretrained checkpoint not found: {load_path}")
+        raise FileNotFoundError(
+            f"Pretrained checkpoint not found: {load_path}")
 
     if logger is not None:
         logger.info(f"Loading pretrained weights from {load_path}")
@@ -154,7 +163,8 @@ def load_pretrained(config, model, logger=None):
         checkpoint_model = new_state_dict
 
         if logger is not None:
-            logger.info("Removed 'encoder.' prefix from pretrained checkpoint keys")
+            logger.info(
+                "Removed 'encoder.' prefix from pretrained checkpoint keys")
 
     msg = model.load_state_dict(checkpoint_model, strict=False)
 
@@ -171,10 +181,12 @@ def load_pretrained(config, model, logger=None):
     load_path = config.PRETRAINED
 
     if load_path is None or load_path == "":
-        raise ValueError("config.PRETRAINED is empty. Please provide a pretrained checkpoint path.")
+        raise ValueError(
+            "config.PRETRAINED is empty. Please provide a pretrained checkpoint path.")
 
     if not os.path.isfile(load_path):
-        raise FileNotFoundError(f"Pretrained checkpoint not found: {load_path}")
+        raise FileNotFoundError(
+            f"Pretrained checkpoint not found: {load_path}")
 
     if logger is not None:
         logger.info(f"Loading pretrained checkpoint from: {load_path}")
@@ -208,7 +220,8 @@ def load_pretrained(config, model, logger=None):
 
         if current_model_state[new_key].shape != value.shape:
             skipped_shape_mismatch.append(
-                (new_key, tuple(value.shape), tuple(current_model_state[new_key].shape))
+                (new_key, tuple(value.shape), tuple(
+                    current_model_state[new_key].shape))
             )
             continue
 
@@ -217,25 +230,36 @@ def load_pretrained(config, model, logger=None):
     load_msg = model.load_state_dict(filtered_state, strict=False)
 
     if logger is not None:
-        logger.info(f"Loaded {len(filtered_state)} matching pretrained tensors")
-        logger.info(f"Removed 'encoder.' prefix from {removed_prefix_count} keys")
-        logger.info(f"Skipped {len(skipped_missing_key)} keys not found in current model")
-        logger.info(f"Skipped {len(skipped_shape_mismatch)} keys with shape mismatch")
-        logger.info(f"Missing keys reported by PyTorch: {load_msg.missing_keys}")
-        logger.info(f"Unexpected keys reported by PyTorch: {load_msg.unexpected_keys}")
+        logger.info(
+            f"Loaded {len(filtered_state)} matching pretrained tensors")
+        logger.info(
+            f"Removed 'encoder.' prefix from {removed_prefix_count} keys")
+        logger.info(
+            f"Skipped {len(skipped_missing_key)} keys not found in current model")
+        logger.info(
+            f"Skipped {len(skipped_shape_mismatch)} keys with shape mismatch")
+        logger.info(
+            f"Missing keys reported by PyTorch: {load_msg.missing_keys}")
+        logger.info(
+            f"Unexpected keys reported by PyTorch: {load_msg.unexpected_keys}")
 
         if len(skipped_missing_key) > 0:
-            logger.info(f"Example missing-key skips: {skipped_missing_key[:10]}")
+            logger.info(
+                f"Example missing-key skips: {skipped_missing_key[:10]}")
 
         if len(skipped_shape_mismatch) > 0:
-            logger.info(f"Example shape mismatches: {skipped_shape_mismatch[:10]}")
+            logger.info(
+                f"Example shape mismatches: {skipped_shape_mismatch[:10]}")
     else:
         print(f"Loaded {len(filtered_state)} matching pretrained tensors")
         print(f"Removed 'encoder.' prefix from {removed_prefix_count} keys")
-        print(f"Skipped {len(skipped_missing_key)} keys not found in current model")
-        print(f"Skipped {len(skipped_shape_mismatch)} keys with shape mismatch")
+        print(
+            f"Skipped {len(skipped_missing_key)} keys not found in current model")
+        print(
+            f"Skipped {len(skipped_shape_mismatch)} keys with shape mismatch")
         print(f"Missing keys reported by PyTorch: {load_msg.missing_keys}")
-        print(f"Unexpected keys reported by PyTorch: {load_msg.unexpected_keys}")
+        print(
+            f"Unexpected keys reported by PyTorch: {load_msg.unexpected_keys}")
 
         if len(skipped_missing_key) > 0:
             print(f"Example missing-key skips: {skipped_missing_key[:10]}")
@@ -270,7 +294,8 @@ def remap_pretrained_keys_vit(checkpoint_model, model, logger=None):
 
         if model_state[new_key].shape != value.shape:
             skipped_shape.append(
-                (new_key, tuple(value.shape), tuple(model_state[new_key].shape))
+                (new_key, tuple(value.shape), tuple(
+                    model_state[new_key].shape))
             )
             continue
 
@@ -278,7 +303,8 @@ def remap_pretrained_keys_vit(checkpoint_model, model, logger=None):
 
     if logger is not None:
         logger.info("ViT pretrained key remapping summary:")
-        logger.info(f"Removed 'encoder.' prefix from {removed_prefix_count} keys")
+        logger.info(
+            f"Removed 'encoder.' prefix from {removed_prefix_count} keys")
         logger.info(f"Skipped {len(skipped_missing)} missing keys")
         logger.info(f"Skipped {len(skipped_shape)} shape mismatch keys")
 
@@ -289,4 +315,3 @@ def remap_pretrained_keys_vit(checkpoint_model, model, logger=None):
             logger.info(f"Example shape mismatches: {skipped_shape[:10]}")
 
     return new_checkpoint_model
-

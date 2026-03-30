@@ -1,5 +1,6 @@
 from .data_simmim import build_loader_simmim
 
+
 def build_loader(config, logger, is_pretrain):
     if is_pretrain:
         return build_loader_simmim(config, logger)

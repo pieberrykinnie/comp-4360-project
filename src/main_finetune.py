@@ -1,3 +1,4 @@
+import sys
 import os
 import time
 import argparse
@@ -8,6 +9,10 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 from timm.utils import AverageMeter
+
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from src.config import get_config
 from src.models import build_model
@@ -373,6 +378,13 @@ if __name__ == "__main__":
         world_size = 1
         distributed = False
         print("Running in single-process mode")
+
+    # Read LOCAL_RANK from the environment (populated by torchrun)
+    if 'LOCAL_RANK' in os.environ:
+        local_rank = int(os.environ['LOCAL_RANK'])
+        config.defrost()
+        config.LOCAL_RANK = local_rank
+        config.freeze()
 
     use_cuda = torch.cuda.is_available()
     device = torch.device(f"cuda:{config.LOCAL_RANK}" if use_cuda else "cpu")

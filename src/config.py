@@ -56,7 +56,7 @@ class ConfigData(ConfigObject):
     BATCH_SIZE: int = 128
     DATA_PATH: Path = ""
     CSV_PATH: Path = ""
-    IMG_ROOT: Path = "" 
+    IMG_ROOT: Path = ""
     TRAIN_CSV_PATH: Path = ""
     VAL_CSV_PATH: Path = ""
     UNCERTAINTY_POLICY: str = "zeros"
