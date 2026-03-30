@@ -188,11 +188,11 @@ def main(config):
     logger.info(f"Training time {total_time_str}")
 
 
-def train_one_epoch(conig, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
+def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
     model.train()
     optimizer.zero_grad()
     
-    logger.info(f"Current learning rate for different parameter groups: {[it["lr"] for it in optimizer.param_groups]}")
+    logger.info(f"Current learning rate for different parameter groups: {[it['lr'] for it in optimizer.param_groups]}")
     
     num_steps = len(data_loader)
     batch_time = AverageMeter()
@@ -275,6 +275,14 @@ def train_one_epoch(conig, model, criterion, data_loader, optimizer, epoch, mixu
     logger.info(f"EPOCH {epoch} traning takes {datetime.timedelta(seconds=int(epoch_time))}")
 
 
+# gathers tensors from all GPUs and concatenates them
+def gather_tensor(tensor):
+    world_size = dist.get_world_size()
+    gathered = [torch.zeros_like(tensor) for _ in range(world_size)]
+    dist.all_gather(gathered, tensor)
+    return torch.cat(gathered, dim=0)
+
+
 # Warning: probs/targets (322-323) stay on local GPU so, currently AUROC here is per local GPU, not global AUROC
 # measure how well the fine tuned chexpert model is doing
 @torch.no_grad() # for efficiency, validate doesnt track gradients since there is no back propagation
@@ -315,12 +323,13 @@ def validate(config, data_loader, model):
         
         # convert logits to probabilities (between 0 and 1, inclusive) for AUROC
         probs = torch.sigmoid(logits)
-        
+        probs = gather_tensor(probs)
+        targets = gather_tensor(targets)
         # store predicted probabilities and true labels for every batch
         # move back to CPU (for AUROC/scikit-learn)
-        # TODO make AUROC computation distributed, i.e., collect probs/targets from all running processes/GPUs before AUROC
-        all_probs.append(probs.cpu())
-        all_targets.append(targets.cpu())
+        if dist.get_rank() == 0:
+            all_probs.append(probs.cpu())
+            all_targets.append(targets.cpu())
         
         end = time.time()
         batch_time.update(end - start)
