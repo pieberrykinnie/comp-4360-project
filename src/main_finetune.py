@@ -1,3 +1,4 @@
+import sys
 import os
 import time
 import argparse
@@ -8,6 +9,10 @@ import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 from timm.utils import AverageMeter
+
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 from src.config import get_config
 from src.models import build_model
