@@ -2,6 +2,7 @@
 # This file is also mostly same, except for loss calculation logic.
 # ------------------------------------------
 
+import sys
 import os
 import time
 import argparse
@@ -16,14 +17,26 @@ from timm.utils import AverageMeter
 # compute AUROC (area under the receiver operating characteristic curve)
 # representing probability that a model ranks a random positive example higher than a random negative example
 from sklearn.metrics import roc_auc_score
-from config import get_config
-from models import build_model
-from data import build_loader
-from lr_scheduler import build_scheduler # not implemented yet
-from optimizer import build_optimizer
-from logger import create_logger
-# TODO load_pretrained not implemented yet
-from utils import load_checkpoint, load_pretrained, save_checkpoint, get_grad_norm, auto_resume_helper, reduce_tensor
+
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from src.config import get_config
+from src.models import build_model
+from src.data import build_loader
+from src.lr_scheduler import build_scheduler
+from src.optimizer import build_optimizer
+from src.logger import create_logger
+from src.utils import (
+    load_checkpoint,
+    load_pretrained,
+    save_checkpoint,
+    get_grad_norm,
+    auto_resume_helper,
+    reduce_tensor,
+)
+
 
 # dont need amp from Apex (outdated)
 # amp = None for simplicity
@@ -147,86 +160,113 @@ def main(config):
         resume_file = auto_resume_helper(config.OUTPUT, logger)
         if resume_file:
             if config.MODEL.RESUME:
-                logger.warning(f"auto-resume changing resume file from {config.MODEL.RESUME} to {resume_file}")
+                logger.warning(
+                    f"auto-resume changing resume file from {config.MODEL.RESUME} to {resume_file}"
+                )
             config.defrost()
             config.MODEL.RESUME = resume_file
             config.freeze()
             logger.info(f"auto resuming from {resume_file}")
         else:
             logger.info(f"no checkpoint found in {config.OUTPUT}, ignoring auto resume")
-    
-    # TODO make sure the functions match with data_finetune.py
-    if config.MODEL.RESUME: # continue a previous finetuning run
-        best_mean_auc = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger)
-        mean_auc, val_loss, per_class_auc = validate(config, data_loader_val, model)
-        logger.info(f"Mean AUROC on the {len(dataset_val)} validation images: {mean_auc:.4f}")
+
+    if config.MODEL.RESUME:
+        best_label_acc = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger)
+        val_label_acc, val_exact_match, val_loss = validate(config, data_loader_val, model, criterion)
+        logger.info(
+            f"Validation after resume - "
+            f"label_acc: {val_label_acc:.2f}% | "
+            f"exact_match: {val_exact_match:.2f}% | "
+            f"loss: {val_loss:.4f}"
+        )
         if config.EVAL_MODE:
             return
-    elif config.PRETRAINED: # load weights from the pretraining stage
+    elif config.PRETRAINED:
         load_pretrained(config, model_without_ddp, logger)
-    
-    if config.THROUGHPUT_MODE:
-        throughput(data_loader_val, model, logger)
+
+    if config.EVAL_MODE:
+        val_label_acc, val_exact_match, val_loss = validate(config, data_loader_val, model, criterion)
+        logger.info(
+            f"Evaluation only - "
+            f"label_acc: {val_label_acc:.2f}% | "
+            f"exact_match: {val_exact_match:.2f}% | "
+            f"loss: {val_loss:.4f}"
+        )
         return
-    
-    logger.info("Start training")
+
+    logger.info("Start fine-tuning")
     start_time = time.time()
-    for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCH):
+
+    for epoch in range(config.TRAIN.START_EPOCH, config.TRAIN.EPOCHS):
         data_loader_train.sampler.set_epoch(epoch)
-        
-        train_one_epoch(config, model, criterion, data_loader_train, optimizer, epoch, mixup_fn, lr_scheduler)
-        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
-            save_checkpoint(config, epoch, model_without_ddp, best_mean_auc, optimizer, lr_scheduler, logger)
-            
-        mean_auc, val_loss, per_class_auc = validate(config, data_loader_val, model)
-        logger.info(f"Mean AUROC on the {len(dataset_val)} validation images: {mean_auc:.4f}")
-        best_mean_auc = max(best_mean_auc, mean_auc)
-        logger.info(f"Best mean AUROC: {best_mean_auc:.4f}")
-    
+
+        train_one_epoch(
+            config=config,
+            model=model,
+            criterion=criterion,
+            data_loader=data_loader_train,
+            optimizer=optimizer,
+            epoch=epoch,
+            lr_scheduler=lr_scheduler,
+        )
+
+        if global_rank == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+            save_checkpoint(config, epoch, model_without_ddp, best_label_acc, optimizer, lr_scheduler, logger)
+
+        val_label_acc, val_exact_match, val_loss = validate(config, data_loader_val, model, criterion)
+
+        logger.info(
+            f"Validation - Epoch {epoch}: "
+            f"label_acc: {val_label_acc:.2f}% | "
+            f"exact_match: {val_exact_match:.2f}% | "
+            f"loss: {val_loss:.4f}"
+        )
+
+        best_label_acc = max(best_label_acc, val_label_acc)
+        logger.info(f"Best validation label accuracy so far: {best_label_acc:.2f}%")
+
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    logger.info(f"Training time {total_time_str}")
+    logger.info(f"Fine-tuning time {total_time_str}")
 
 
-def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler):
+def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, lr_scheduler):
+    global logger, device, use_cuda
+
     model.train()
     optimizer.zero_grad()
-    
-    logger.info(f"Current learning rate for different parameter groups: {[it['lr'] for it in optimizer.param_groups]}")
-    
+
+    logger.info(
+        f"Current learning rate(s): {[group['lr'] for group in optimizer.param_groups]}"
+    )
+
     num_steps = len(data_loader)
     batch_time = AverageMeter()
     loss_meter = AverageMeter()
     norm_meter = AverageMeter()
-    
+    label_acc_meter = AverageMeter()
+
     start = time.time()
     epoch_start = time.time()
-    for idx, (samples, targets) in enumerate(data_loader):
-        samples = samples.cuda(non_blocking=True)
-        targets = targets.float().cuda(non_blocking=True)
-        
-        # for chexpert multi-label classification we dont need mixup (can use for ablation if we want)
-        if mixup_fn is not None:
-            samples, targets = mixup_fn(samples, targets)
-        
-        outputs = model(samples)
-        
+
+    for idx, (images, targets) in enumerate(data_loader):
+        images = images.to(device, non_blocking=use_cuda)
+        targets = targets.to(device, non_blocking=use_cuda)
+
+        outputs = model(images)
+        loss = criterion(outputs, targets)
+
         if config.TRAIN.ACCUMULATION_STEPS > 1:
-            loss = criterion(outputs, targets)
             loss = loss / config.TRAIN.ACCUMULATION_STEPS
-            if config.AMP_OPT_LEVEL != 'O0':
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-                if config.TRAIN.CLIP_GRAD:
-                    grad_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), config.TRAIN.CLIP_GRAD)
-                else:
-                    grad_norm = get_grad_norm(amp.master_params(optimizer))
-            else:
-                loss.backward()
-                if config.TRAIN.CLIP_GRAD:
-                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
-                else:
-                    grad_norm = get_grad_norm(model.parameters())
+
+        loss.backward()
+
+        if config.TRAIN.CLIP_GRAD:
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
+        else:
+            grad_norm = get_grad_norm(model.parameters())
+
+        if config.TRAIN.ACCUMULATION_STEPS > 1:
             if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
                 optimizer.step()
                 optimizer.zero_grad()
@@ -408,6 +448,13 @@ if __name__ == '__main__':
     else:
         rank = -1
         world_size = -1
+        
+    # Read LOCAL_RANK from the environment (populated by torchrun)
+    if 'LOCAL_RANK' in os.environ:
+        local_rank = int(os.environ['LOCAL_RANK'])
+        config.defrost()
+        config.LOCAL_RANK = local_rank
+        config.freeze()
         
     torch.cuda.set_device(config.LOCAL_RANK)        # choose the GPU to use (LOCAL_RANK = 1 -> GPU 1)
     # helps distributed GPUs talk to each other (we will probably just use one GPU anyway)

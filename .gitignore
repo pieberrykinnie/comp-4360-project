@@ -1,3 +1,6 @@
+data/
+*.pth
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -254,4 +257,5 @@ __marimo__/
 build/
 
 # macOS
+.DS_Stored
 .DS_Store

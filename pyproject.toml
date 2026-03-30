@@ -3,16 +3,16 @@ name = "comp-4360-project"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
-    "kaggle>=2.0.0",
+    "kagglehub>=1.0.0",
     "pyyaml>=6.0.3",
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
     "termcolor>=3.3.0",
     "timm>=1.0.25",
     "torch>=2.5.1",
-    "torchvision>=0.2.0",
+    "torchvision>=0.20.0",
 ]
 
 [tool.uv.sources]

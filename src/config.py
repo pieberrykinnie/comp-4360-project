@@ -1,16 +1,41 @@
 from abc import ABC
 from argparse import Namespace
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict, is_dataclass
 from pathlib import Path
 import os
 import yaml
 
 
 class ConfigObject(ABC):
-    """
-    Abstract class denoting a configuration object.
-    """
-    pass
+
+    def defrost(self):
+        return self
+
+    def freeze(self):
+        return self
+
+    def dump(self):
+
+        def convert_value(value):
+            if is_dataclass(value):
+                return {k: convert_value(v) for k, v in asdict(value).items()}
+
+            if isinstance(value, dict):
+                return {k: convert_value(v) for k, v in value.items()}
+
+            if isinstance(value, list):
+                return [convert_value(v) for v in value]
+
+            if isinstance(value, tuple):
+                return [convert_value(v) for v in value]
+
+            if isinstance(value, Path):
+                return str(value)
+
+            return value
+
+        config_dict = convert_value(self)
+        return yaml.safe_dump(config_dict, sort_keys=False)
 
 
 @dataclass
@@ -30,6 +55,12 @@ class ConfigData(ConfigObject):
     """
     BATCH_SIZE: int = 128
     DATA_PATH: Path = ""
+    CSV_PATH: Path = ""
+    IMG_ROOT: Path = ""
+    TRAIN_CSV_PATH: Path = ""
+    VAL_CSV_PATH: Path = ""
+    UNCERTAINTY_POLICY: str = "zeros"
+    FRONTAL_ONLY: bool = True
     DATASET: str = "imagenet"
     IMG_SIZE: int = 224
     INTERPOLATION: str = "bicubic"
@@ -47,7 +78,7 @@ class ConfigModelSwin(ConfigObject):
     TODO: update description of parameters
     """
     PATCH_SIZE: int = 4
-    IN_CHANS: int = 3
+    IN_CHANS: int = 1
     EMBED_DIM: int = 96
     DEPTHS: list[int] = field(default_factory=lambda: [2, 2, 6, 2])
     NUM_HEADS: list[int] = field(default_factory=lambda: [3, 6, 12, 24])
@@ -67,7 +98,7 @@ class ConfigModelVit(ConfigObject):
     TODO: update description of parameters
     """
     PATCH_SIZE: int = 16
-    IN_CHANS: int = 3
+    IN_CHANS: int = 1
     EMBED_DIM: int = 768
     DEPTH: int = 12
     NUM_HEADS: int = 12
@@ -95,8 +126,8 @@ class ConfigModel(ConfigObject):
     SWIN: Swin Transformer parameters
     VIT: Vision Transformer parameters
     """
-    TYPE: str = "swin"
-    NAME: str = "swin_tiny_patch4_window7_224"
+    TYPE: str = "vit"
+    NAME: str = "simmim_pretrain"
     RESUME: Path = ""
     NUM_CLASSES: int = 1000
     DROP_RATE: float = 0.0
@@ -319,10 +350,16 @@ def _update_config_from_args(config: Config, args: Namespace) -> None:
         )
 
     def _check_args(name: str) -> bool:
-        """
-        Check if the argument exists and is set.
-        """
-        return getattr(args, name, None) is not None
+
+        if not hasattr(args, os.name):
+            return False
+
+        value = getattr(args, os.name)
+
+        if isinstance(value, bool):
+            return value
+
+        return value is not None
 
     # Merge from specific arguments
     if _check_args("batch_size"):
