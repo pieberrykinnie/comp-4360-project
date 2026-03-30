@@ -1,14 +1,22 @@
+# ------------------------------------------
+# This file is also mostly same, except for loss calculation logic.
+# ------------------------------------------
+
 import sys
 import os
 import time
 import argparse
 import datetime
 import numpy as np
-
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
+import torch.nn as nn                       # need nn.BCEWithLogitsLoss for multi label binary classification
 from timm.utils import AverageMeter
+
+# compute AUROC (area under the receiver operating characteristic curve)
+# representing probability that a model ranks a random positive example higher than a random negative example
+from sklearn.metrics import roc_auc_score
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
@@ -30,126 +38,124 @@ from src.utils import (
 )
 
 
-logger = None
-distributed = False
-device = None
-use_cuda = False
-global_rank = 0
-actual_world_size = 1
-
+# dont need amp from Apex (outdated)
+# amp = None for simplicity
+amp = None
 
 def parse_option():
-    parser = argparse.ArgumentParser("CheXpert fine-tuning script", add_help=False)
-
+    parser = argparse.ArgumentParser('ViT finetuning on Chexpert script')
+    
     parser.add_argument(
-        "--cfg",
+        '--cfg',
         type=str,
         required=True,
         metavar="FILE",
-        help="path to config file",
+        help='path to config file',
     )
     parser.add_argument(
-        "--opts",
-        help="modify config options by adding KEY-VALUE pairs",
+        '--opts',
+        help="modify config options by adding KEY-VALUE pairs.",
         default=None,
-        nargs="+",
+        nargs='+',
     )
-
-    parser.add_argument("--batch-size", type=int, help="batch size for single GPU")
-    parser.add_argument("--data-path", type=str, help="optional dataset root override")
-    parser.add_argument("--pretrained", type=str, help="path to pre-trained model")
-    parser.add_argument("--resume", type=str, help="resume from checkpoint")
-    parser.add_argument("--accumulation-steps", type=int, help="gradient accumulation steps")
     parser.add_argument(
-        "--use-checkpoint",
-        action="store_true",
+        '--batch-size',
+        type=int,
+        help="batch size for single GPU",
+    )
+    parser.add_argument(
+        '--data-path',
+        type=str,
+        help="path to dataset",
+    )
+    parser.add_argument(
+        '--pretrained',
+        type=str,
+        help="path to pretrained model",
+    )
+    parser.add_argument(
+        '--resume',
+        help="resume from checkpoint",
+    )
+    parser.add_argument(
+        '--accumulation_steps',
+        type=int,
+        help="gradient accumulation steps",
+    )
+    parser.add_argument(
+        '--use_checkpoint',
+        action='store_true',
         help="whether to use gradient checkpointing to save memory",
     )
     parser.add_argument(
-        "--amp-opt-level",
+        '--amp-opt-level',
         type=str,
-        default="O0",
-        choices=["O0", "O1", "O2"],
-        help="mixed precision opt level, keep O0 for this project",
+        default='O0',
+        choices=['O0', 'O1', 'O2'],
+        help="mixed precision opt level, if O0, no amp is used"
     )
     parser.add_argument(
-        "--output",
-        default="output",
+        '--output',
+        default='output',
         type=str,
-        metavar="PATH",
-        help="root of output folder",
+        metavar='PATH',
+        help="root of output folder, the full path is <output>/<model_name>/<tag> (default: output)"
     )
-    parser.add_argument("--tag", type=str, help="tag of experiment")
-    parser.add_argument("--eval", action="store_true", help="evaluation only")
-    parser.add_argument("--throughput", action="store_true", help="throughput only")
     parser.add_argument(
-        "--local-rank",
+        '--tag',
+        help="tag of experiment",
+    )
+    parser.add_argument(
+        '--eval',
+        action='store_true',
+        help="perform evaluation only"
+    )
+    parser.add_argument(
+        '--throughput',
+        action='store_true',
+        help='test throughput only'
+    )
+    parser.add_argument(
+        '--local-rank',
         type=int,
-        default=0,
-        help="local rank for DistributedDataParallel",
+        required=True,
+        help="local rank for DistributedDataParallel"
     )
-
+    
     args = parser.parse_args()
     config = get_config(args)
+    
     return args, config
 
 
-def compute_multilabel_metrics(logits, targets, threshold=0.5):
-    """
-    Compute simple multi-label metrics.
-
-    label_acc:
-        element-wise label accuracy across all 14 labels
-
-    exact_match:
-        percentage of samples where every label matches
-    """
-    probs = torch.sigmoid(logits)
-    preds = (probs >= threshold).float()
-
-    label_acc = (preds == targets).float().mean() * 100.0
-    exact_match = (preds == targets).all(dim=1).float().mean() * 100.0
-
-    return label_acc, exact_match
-
-
 def main(config):
-    global logger, distributed, device, use_cuda
-
-    dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(
-        config, logger, is_pretrain=False
-    )
-
+    # TODO check mixup_fn
+    dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config, logger, is_pretrain=False)
     logger.info(f"Creating model: {config.MODEL.TYPE}/{config.MODEL.NAME}")
     model = build_model(config, is_pretrain=False)
-    model.to(device)
+    model.cuda()
     logger.info(str(model))
-
+    
+    # check this chunk works with data_finetune
     optimizer = build_optimizer(config, model, logger, is_pretrain=False)
-    model_without_ddp = model
-
-    if distributed:
-        model = torch.nn.parallel.DistributedDataParallel(
-            model,
-            device_ids=[config.LOCAL_RANK] if use_cuda else None,
-            broadcast_buffers=False,
-        )
-        model_without_ddp = model.module
-
+    if config.AMP_OPT_LEVEL == 'O0' and amp is not None:
+        model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
+    model_without_ddp = model.module
+    
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"number of params: {n_parameters}")
-
-    if hasattr(model_without_ddp, "flops"):
+    if hasattr(model_without_ddp, 'flops'):
         flops = model_without_ddp.flops()
         logger.info(f"number of GFLOPs: {flops / 1e9}")
-
+    
     lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
-
-    # Multi-label classification loss
-    criterion = torch.nn.BCEWithLogitsLoss()
-
-    best_label_acc = 0.0
-
+    
+    # BCEWithLogitsLoss treats each of the 14 outputs independently (an image can have multiple findings)
+    criterion = nn.BCEWithLogitsLoss()
+    # replaces "max_accuracy" because AUROC is our main metric for Chexpert
+    best_mean_auc = 0.0
+    
     if config.TRAIN.AUTO_RESUME:
         resume_file = auto_resume_helper(config.OUTPUT, logger)
         if resume_file:
@@ -244,182 +250,242 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, lr_
     epoch_start = time.time()
 
     for idx, (images, targets) in enumerate(data_loader):
-        images = images.to(device, non_blocking=use_cuda)
-        targets = targets.to(device, non_blocking=use_cuda)
+        images = images.cuda(non_blocking=True)
+        targets = targets.float().cuda(non_blocking=True)
 
         outputs = model(images)
         loss = criterion(outputs, targets)
 
         if config.TRAIN.ACCUMULATION_STEPS > 1:
             loss = loss / config.TRAIN.ACCUMULATION_STEPS
+            loss.backward()
 
-        loss.backward()
+            if config.TRAIN.CLIP_GRAD:
+                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
+            else:
+                grad_norm = get_grad_norm(model.parameters())
 
-        if config.TRAIN.CLIP_GRAD:
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
-        else:
-            grad_norm = get_grad_norm(model.parameters())
-
-        if config.TRAIN.ACCUMULATION_STEPS > 1:
             if (idx + 1) % config.TRAIN.ACCUMULATION_STEPS == 0:
                 optimizer.step()
                 optimizer.zero_grad()
                 lr_scheduler.step_update(epoch * num_steps + idx)
         else:
-            optimizer.step()
             optimizer.zero_grad()
+            if config.AMP_OPT_LEVEL != 'O0':
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+                if config.TRAIN.CLIP_GRAD:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), config.TRAIN.CLIP_GRAD)
+                else:
+                    grad_norm = get_grad_norm(amp.master_params(optimizer))
+            else:
+                loss.backward()
+                if config.TRAIN.CLIP_GRAD:
+                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
+                else:
+                    grad_norm = get_grad_norm(model.parameters())
+            optimizer.step()
             lr_scheduler.step_update(epoch * num_steps + idx)
-
-        if use_cuda:
-            torch.cuda.synchronize()
-
-        label_acc, _ = compute_multilabel_metrics(outputs.detach(), targets)
-
-        loss_meter.update(loss.item(), images.size(0))
-
-        if torch.is_tensor(grad_norm):
-            grad_norm = grad_norm.item()
+        
+        torch.cuda.synchronize()
+        
+        loss_meter.update(loss.item(), targets.size(0))
         norm_meter.update(grad_norm)
-
-        if torch.is_tensor(label_acc):
-            label_acc = label_acc.item()
-        label_acc_meter.update(label_acc, images.size(0))
-
         end = time.time()
         batch_time.update(end - start)
         start = end
-
+        
         if idx % config.PRINT_FREQ == 0:
-            lr = optimizer.param_groups[0]["lr"]
-            memory_used = 0.0
-            if use_cuda:
-                memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
-
+            lr = optimizer.param_groups[-1]['lr']
+            memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
             etas = batch_time.avg * (num_steps - idx)
-
             logger.info(
                 f"Train: [{epoch}/{config.TRAIN.EPOCHS}][{idx}/{num_steps}]\t"
-                f"eta {datetime.timedelta(seconds=int(etas))} "
-                f"lr {lr:.6f}\t"
+                f"eta {datetime.timedelta(seconds=int(etas))} lr {lr:.6f}\t"
                 f"time {batch_time.val:.4f} ({batch_time.avg:.4f})\t"
                 f"loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t"
-                f"label_acc {label_acc_meter.val:.2f} ({label_acc_meter.avg:.2f})\t"
                 f"grad_norm {norm_meter.val:.4f} ({norm_meter.avg:.4f})\t"
                 f"mem {memory_used:.0f}MB"
             )
-
     epoch_end = time.time()
     epoch_time = epoch_end - epoch_start
-    logger.info(f"EPOCH {epoch} fine-tuning takes {datetime.timedelta(seconds=int(epoch_time))}")
+    logger.info(f"EPOCH {epoch} traning takes {datetime.timedelta(seconds=int(epoch_time))}")
 
 
+# gathers tensors from all GPUs and concatenates them
+def gather_tensor(tensor):
+    world_size = dist.get_world_size()
+    gathered = [torch.zeros_like(tensor) for _ in range(world_size)]
+    dist.all_gather(gathered, tensor)
+    return torch.cat(gathered, dim=0)
+
+
+# Warning: probs/targets (322-323) stay on local GPU so, currently AUROC here is per local GPU, not global AUROC
+# measure how well the fine tuned chexpert model is doing
+@torch.no_grad() # for efficiency, validate doesnt track gradients since there is no back propagation
+def validate(config, data_loader, model):
+    # BCEWithLogitsLoss combines sigmoid and binary cross entropy
+    # (expects raw logits from the model)
+    criterion = nn.BCEWithLogitsLoss() # loss used for multi label classification in checpert
+    model.eval()
+    
+    # batch_time.val stores time for current batch
+    # batch_time.avg stores average time so far
+    batch_time = AverageMeter()
+    # loss_meter.val stores the current reduced loss
+    # loss_meter.avg stores the average validation loss across all samples
+    loss_meter = AverageMeter()
+    
+    all_probs = []      # collect probabilities/predictions from all batches
+    all_targets = []    # collect true labels from all batches
+
+    start = time.time()
+    # idx is the batch index
+    # each batch contains input chest xray images, and multilabel vector for each image (0,1 classificatin for all 14 pathologies)
+    # target might look like this: [1,0,0,1,1,0,0,0,0,0,0,0,0,0] (14D vector for 14 classes/pathologies)
+    for idx, (images, targets) in enumerate(data_loader):
+        # move data to GPU memory
+        images = images.cuda(non_blocking=True)
+        targets = targets.float().cuda(non_blocking=True)
+        # logits are raw scores for the 14 classifications (for 1 image) before sigmoid
+        logits = model(images)
+        # our loss, compares the predicted logits by the model with the true multilabel targets
+        loss = criterion(logits, targets)
+        
+        # if validation is running on multiple GPUs, each GPU computes its own batch loss
+        # reduced_loss is the average loss across all GPUs for a batch
+        reduced_loss = reduce_tensor(loss)
+        # update loss average (weighted by number of samples in the batch)
+        loss_meter.update(reduced_loss.item(), targets.size(0))
+        
+        # convert logits to probabilities (between 0 and 1, inclusive) for AUROC
+        probs = torch.sigmoid(logits)
+        probs = gather_tensor(probs)
+        targets = gather_tensor(targets)
+        # store predicted probabilities and true labels for every batch
+        # move back to CPU (for AUROC/scikit-learn)
+        if dist.get_rank() == 0:
+            all_probs.append(probs.cpu())
+            all_targets.append(targets.cpu())
+        
+        end = time.time()
+        batch_time.update(end - start)
+        start = end
+        if idx % config.PRINT_FREQ == 0:                                            # logs every "PRINT_FREQ" batches
+            memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)     # converts max allocated Bytes to MB
+            logger.info(
+                f'Test: [{idx}/{len(data_loader)}]\t'
+                f'Time {batch_time.val:.3f} (avg {batch_time.avg:.3f})\t'
+                f'Loss {loss_meter.val:.4f} (avg {loss_meter.avg:.4f})\t'
+                f'Mem {memory_used:.0f}MB'
+            )
+    # list of tensors, one tensor per batch
+    # concatenate all stored tensors from each batch to make one big tensor (number of examples, 14 classes) for the whole dataset
+    # then convert to numpy arrays (for scikit-learn)
+    # so now we have one big np array of probabilities, and one of true labels
+    all_probs = torch.cat(all_probs, dim=0).numpy()
+    all_targets = torch.cat(all_targets, dim=0).numpy()
+    
+    per_class_auc = []                      # store AUROC for each pathology
+    for c in range(all_targets.shape[1]):   # loop over all 14 classes
+        # extract one class (one column == one pathology) at a time
+        y_true = all_targets[:, c]      # true label for that class/pathology across the whole set
+        y_score = all_probs[:, c]       # predicted probabilities for that class across the whole set
+        # roc_auc_score needs both positive and negative examples, otherwise just stores nan for that class
+        if len(np.unique(y_true)) < 2:
+            per_class_auc.append(float("nan"))
+        else:
+            # for one class/pathology, roc_auc_score measures how well the model
+            # ranks positive (contains pathology) images higher than negative images
+            # its basically the % of correct rankings, where correct means disease image
+            # has lower probability than non disease image
+            per_class_auc.append(roc_auc_score(y_true, y_score))
+    # averages the AUROC per class (ignores class with nan)
+    # mean AUROC = overall model performance across all diseases (high means model is good overall)
+    mean_auc = float(np.nanmean(per_class_auc))
+    
+    logger.info(f'Mean AUROC {mean_auc:.4f}')
+    logger.info(f'Per-class AUROC {per_class_auc}')
+
+    return mean_auc, loss_meter.avg, per_class_auc
+
+
+# measures inference speed
 @torch.no_grad()
-def validate(config, data_loader, model, criterion):
-    global device, use_cuda
-
+def throughput(data_loader, model, logger):
     model.eval()
 
-    batch_time = AverageMeter()
-    loss_meter = AverageMeter()
-    label_acc_meter = AverageMeter()
-    exact_match_meter = AverageMeter()
-
-    end = time.time()
-
     for idx, (images, targets) in enumerate(data_loader):
-        images = images.to(device, non_blocking=use_cuda)
-        targets = targets.to(device, non_blocking=use_cuda)
-
-        outputs = model(images)
-        loss = criterion(outputs, targets)
-
-        label_acc, exact_match = compute_multilabel_metrics(outputs, targets)
-
-        loss = reduce_tensor(loss)
-        label_acc = reduce_tensor(label_acc)
-        exact_match = reduce_tensor(exact_match)
-
-        loss_meter.update(loss.item(), targets.size(0))
-        label_acc_meter.update(label_acc.item(), targets.size(0))
-        exact_match_meter.update(exact_match.item(), targets.size(0))
-
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        if idx % config.PRINT_FREQ == 0:
-            memory_used = 0.0
-            if use_cuda:
-                memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
-
-            logger.info(
-                f"Val: [{idx}/{len(data_loader)}]\t"
-                f"time {batch_time.val:.4f} ({batch_time.avg:.4f})\t"
-                f"loss {loss_meter.val:.4f} ({loss_meter.avg:.4f})\t"
-                f"label_acc {label_acc_meter.val:.2f} ({label_acc_meter.avg:.2f})\t"
-                f"exact_match {exact_match_meter.val:.2f} ({exact_match_meter.avg:.2f})\t"
-                f"mem {memory_used:.0f}MB"
-            )
-
-    return label_acc_meter.avg, exact_match_meter.avg, loss_meter.avg
+        images = images.cuda(non_blocking=True)
+        batch_size = images.shape[0]
+        for i in range(50):     # warmup
+            model(images)
+        torch.cuda.synchronize()    # waits for GPU to finish work
+        logger.info(f"throughput averaged with 30 times")
+        tic1 = time.time()
+        for i in range(30):     # time this model run (whole 30 times)
+            model(images)
+        torch.cuda.synchronize()
+        tic2 = time.time()
+        logger.info(f"batch_size {batch_size} throughput {30 * batch_size / (tic2 - tic1)}")
+        return
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     args, config = parse_option()
-    if config.AMP_OPT_LEVEL != "O0":
-        raise ValueError("This fine-tuning script currently expects AMP_OPT_LEVEL = 'O0'")
 
-    if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
+    if config.AMP_OPT_LEVEL != "O0":
+        assert amp is not None, "amp not installed. Note: make sure config.AMP_OPT_LEVEL == 'O0', from apex import amp is outdated. If we really want amp, we can use pyTorch's."
+
+    # RANK is the ID of the current process (GPU), WORLD_SIZE is the total number of processes (GPUs) participating
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         rank = int(os.environ["RANK"])
-        world_size = int(os.environ["WORLD_SIZE"])
-        distributed = True
+        world_size = int(os.environ['WORLD_SIZE'])
         print(f"RANK and WORLD_SIZE in environ: {rank}/{world_size}")
     else:
-        rank = 0
-        world_size = 1
-        distributed = False
-        print("Running in single-process mode")
-
+        rank = -1
+        world_size = -1
+        
     # Read LOCAL_RANK from the environment (populated by torchrun)
     if 'LOCAL_RANK' in os.environ:
         local_rank = int(os.environ['LOCAL_RANK'])
         config.defrost()
         config.LOCAL_RANK = local_rank
         config.freeze()
-
-    use_cuda = torch.cuda.is_available()
-    device = torch.device(f"cuda:{config.LOCAL_RANK}" if use_cuda else "cpu")
-
-    if use_cuda:
-        torch.cuda.set_device(config.LOCAL_RANK)
-
-    if distributed:
-        backend = "nccl" if use_cuda else "gloo"
-        dist.init_process_group(
-            backend=backend,
-            init_method="env://",
-            world_size=world_size,
-            rank=rank,
+        
+    torch.cuda.set_device(config.LOCAL_RANK)        # choose the GPU to use (LOCAL_RANK = 1 -> GPU 1)
+    # helps distributed GPUs talk to each other (we will probably just use one GPU anyway)
+    torch.distributed.init_process_group(
+        backend='nccl',
+        init_method='env://',
+        world_size=world_size,
+        rank=rank
         )
-        dist.barrier()
+    torch.distributed.barrier()                     # wait here until all GPUs/processes are synchronized
 
-    global_rank = dist.get_rank() if distributed else 0
-    actual_world_size = dist.get_world_size() if distributed else 1
-
-    seed = config.SEED + global_rank
+    # set random seeds
+    seed = config.SEED + dist.get_rank() # dist.get_rank() so seeds are not identical among GPUs
     torch.manual_seed(seed)
     np.random.seed(seed)
     cudnn.benchmark = True
 
+    # linear scale the learning rate according to total batch size, may not be optimal
+    # 512 is the reference batch size original paper tuned the learning rate for
+    original_reference_batch_size = 512.0 # not using (from original paper, trained on imagenet)
+    # using 32 since chexpert is significantly smaller than imagenet (original paper dataset)
+    # can change depending on the learning rate
     reference_batch_size = 32.0
-    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * actual_world_size / reference_batch_size
-    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * actual_world_size / reference_batch_size
-    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * actual_world_size / reference_batch_size
-
+    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
+    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
+    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
+    
+    # gradient accumulation also need to scale the learning rate
     if config.TRAIN.ACCUMULATION_STEPS > 1:
-        linear_scaled_lr *= config.TRAIN.ACCUMULATION_STEPS
-        linear_scaled_warmup_lr *= config.TRAIN.ACCUMULATION_STEPS
-        linear_scaled_min_lr *= config.TRAIN.ACCUMULATION_STEPS
-
+        linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS
+        linear_scaled_warmup_lr = linear_scaled_warmup_lr * config.TRAIN.ACCUMULATION_STEPS
+        linear_scaled_min_lr = linear_scaled_min_lr * config.TRAIN.ACCUMULATION_STEPS
+    
+    # update the LR values
     config.defrost()
     config.TRAIN.BASE_LR = linear_scaled_lr
     config.TRAIN.WARMUP_LR = linear_scaled_warmup_lr
@@ -427,18 +493,15 @@ if __name__ == "__main__":
     config.freeze()
 
     os.makedirs(config.OUTPUT, exist_ok=True)
-    logger = create_logger(
-        output_dir=config.OUTPUT,
-        dist_rank=global_rank,
-        name=f"{config.MODEL.NAME}",
-    )
+    logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
 
-    if global_rank == 0:
+    if dist.get_rank() == 0: # to avoid duplicates from other GPUs if they exist
         path = os.path.join(config.OUTPUT, "config.json")
         with open(path, "w") as f:
             f.write(config.dump())
         logger.info(f"Full config saved to {path}")
 
+    # print config
     logger.info(config.dump())
 
     main(config)
