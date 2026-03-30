@@ -379,6 +379,13 @@ if __name__ == "__main__":
         distributed = False
         print("Running in single-process mode")
 
+    # Read LOCAL_RANK from the environment (populated by torchrun)
+    if 'LOCAL_RANK' in os.environ:
+        local_rank = int(os.environ['LOCAL_RANK'])
+        config.defrost()
+        config.LOCAL_RANK = local_rank
+        config.freeze()
+
     use_cuda = torch.cuda.is_available()
     device = torch.device(f"cuda:{config.LOCAL_RANK}" if use_cuda else "cpu")
 
