@@ -1,5 +1,5 @@
 data/
-output/simmim_pretrain
+*.pth
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -259,4 +259,3 @@ build/
 # macOS
 .DS_Stored
 .DS_Store
-output/
