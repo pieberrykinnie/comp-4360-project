@@ -12,7 +12,8 @@ MODEL:
     USE_MEAN_POOLING: True
 DATA:
   IMG_SIZE: 224
-  CSV_PATH: "data/CheXpert-v1.0-small/train.csv"
+  TRAIN_CSV_PATH: "data/CheXpert-v1.0-small/train.csv"
+  VAL_CSV_PATH: "data/CheXpert-v1.0-small/valid.csv"
   IMG_ROOT: "data/"
 TRAIN:
   EPOCHS: 100
