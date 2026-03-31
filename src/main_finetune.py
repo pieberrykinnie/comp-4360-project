@@ -4,30 +4,11 @@
 
 import sys
 import os
-import time
-import argparse
-import datetime
-import numpy as np
-import torch
-import torch.backends.cudnn as cudnn
-import torch.distributed as dist
-import torch.nn as nn                       # need nn.BCEWithLogitsLoss for multi label binary classification
-from timm.utils import AverageMeter
-
-# compute AUROC (area under the receiver operating characteristic curve)
-# representing probability that a model ranks a random positive example higher than a random negative example
-from sklearn.metrics import roc_auc_score
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.config import get_config
-from src.models import build_model
-from src.data import build_loader
-from src.lr_scheduler import build_scheduler
-from src.optimizer import build_optimizer
-from src.logger import create_logger
 from src.utils import (
     load_checkpoint,
     load_pretrained,
@@ -36,15 +17,36 @@ from src.utils import (
     auto_resume_helper,
     reduce_tensor,
 )
+from src.logger import create_logger
+from src.optimizer import build_optimizer
+from src.lr_scheduler import build_scheduler
+from src.data import build_loader
+from src.models import build_model
+from src.config import get_config
 
+import time
+import argparse
+import datetime
+import numpy as np
+import torch
+import torch.backends.cudnn as cudnn
+import torch.distributed as dist
+# need nn.BCEWithLogitsLoss for multi label binary classification
+import torch.nn as nn
+from timm.utils import AverageMeter
+
+# compute AUROC (area under the receiver operating characteristic curve)
+# representing probability that a model ranks a random positive example higher than a random negative example
+from sklearn.metrics import roc_auc_score
 
 # dont need amp from Apex (outdated)
 # amp = None for simplicity
 amp = None
 
+
 def parse_option():
     parser = argparse.ArgumentParser('ViT finetuning on Chexpert script')
-    
+
     parser.add_argument(
         '--cfg',
         type=str,
@@ -121,41 +123,45 @@ def parse_option():
         required=True,
         help="local rank for DistributedDataParallel"
     )
-    
+
     args = parser.parse_args()
     config = get_config(args)
-    
+
     return args, config
 
 
 def main(config):
     # TODO check mixup_fn
-    dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config, logger, is_pretrain=False)
+    dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(
+        config, logger, is_pretrain=False)
     logger.info(f"Creating model: {config.MODEL.TYPE}/{config.MODEL.NAME}")
     model = build_model(config, is_pretrain=False)
     model.cuda()
     logger.info(str(model))
-    
+
     # check this chunk works with data_finetune
     optimizer = build_optimizer(config, model, logger, is_pretrain=False)
     if config.AMP_OPT_LEVEL == 'O0' and amp is not None:
-        model, optimizer = amp.initialize(model, optimizer, opt_level=config.AMP_OPT_LEVEL)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
+        model, optimizer = amp.initialize(
+            model, optimizer, opt_level=config.AMP_OPT_LEVEL)
+    model = torch.nn.parallel.DistributedDataParallel(
+        model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
     model_without_ddp = model.module
-    
-    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    n_parameters = sum(p.numel()
+                       for p in model.parameters() if p.requires_grad)
     logger.info(f"number of params: {n_parameters}")
     if hasattr(model_without_ddp, 'flops'):
         flops = model_without_ddp.flops()
         logger.info(f"number of GFLOPs: {flops / 1e9}")
-    
+
     lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
-    
+
     # BCEWithLogitsLoss treats each of the 14 outputs independently (an image can have multiple findings)
     criterion = nn.BCEWithLogitsLoss()
     # replaces "max_accuracy" because AUROC is our main metric for Chexpert
-    best_mean_auc = 0.0
-    
+    best_label_acc = 0.0
+
     if config.TRAIN.AUTO_RESUME:
         resume_file = auto_resume_helper(config.OUTPUT, logger)
         if resume_file:
@@ -168,15 +174,18 @@ def main(config):
             config.freeze()
             logger.info(f"auto resuming from {resume_file}")
         else:
-            logger.info(f"no checkpoint found in {config.OUTPUT}, ignoring auto resume")
+            logger.info(
+                f"no checkpoint found in {config.OUTPUT}, ignoring auto resume")
 
     if config.MODEL.RESUME:
-        best_label_acc = load_checkpoint(config, model_without_ddp, optimizer, lr_scheduler, logger)
-        val_label_acc, val_exact_match, val_loss = validate(config, data_loader_val, model, criterion)
+        best_label_acc = load_checkpoint(
+            config, model_without_ddp, optimizer, lr_scheduler, logger)
+        val_mean_auc, val_loss, val_per_class_auc = validate(
+            config, data_loader_val, model)
+
         logger.info(
-            f"Validation after resume - "
-            f"label_acc: {val_label_acc:.2f}% | "
-            f"exact_match: {val_exact_match:.2f}% | "
+            f"Validation after resume -  "
+            f"mean_auc: {val_mean_auc:.4f} | "
             f"loss: {val_loss:.4f}"
         )
         if config.EVAL_MODE:
@@ -185,11 +194,11 @@ def main(config):
         load_pretrained(config, model_without_ddp, logger)
 
     if config.EVAL_MODE:
-        val_label_acc, val_exact_match, val_loss = validate(config, data_loader_val, model, criterion)
+        val_mean_auc, val_loss, val_per_class_auc = validate(
+            config, data_loader_val, model)
         logger.info(
             f"Evaluation only - "
-            f"label_acc: {val_label_acc:.2f}% | "
-            f"exact_match: {val_exact_match:.2f}% | "
+            f"mean_auc: {val_mean_auc:.4f} | "
             f"loss: {val_loss:.4f}"
         )
         return
@@ -210,20 +219,22 @@ def main(config):
             lr_scheduler=lr_scheduler,
         )
 
-        if global_rank == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
-            save_checkpoint(config, epoch, model_without_ddp, best_label_acc, optimizer, lr_scheduler, logger)
+        if dist.get_rank() == 0 and (epoch % config.SAVE_FREQ == 0 or epoch == (config.TRAIN.EPOCHS - 1)):
+            save_checkpoint(config, epoch, model_without_ddp,
+                            best_label_acc, optimizer, lr_scheduler, logger)
 
-        val_label_acc, val_exact_match, val_loss = validate(config, data_loader_val, model, criterion)
+        val_mean_auc, val_loss, val_per_class_auc = validate(
+            config, data_loader_val, model)
 
         logger.info(
             f"Validation - Epoch {epoch}: "
-            f"label_acc: {val_label_acc:.2f}% | "
-            f"exact_match: {val_exact_match:.2f}% | "
+            f"mean_auc: {val_mean_auc:.4f} | "
             f"loss: {val_loss:.4f}"
         )
 
-        best_label_acc = max(best_label_acc, val_label_acc)
-        logger.info(f"Best validation label accuracy so far: {best_label_acc:.2f}%")
+        best_label_acc = max(best_label_acc, max(val_per_class_auc))
+        logger.info(
+            f"Best validation label accuracy so far: {best_label_acc:.2f}%")
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
@@ -261,7 +272,8 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, lr_
             loss.backward()
 
             if config.TRAIN.CLIP_GRAD:
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), config.TRAIN.CLIP_GRAD)
             else:
                 grad_norm = get_grad_norm(model.parameters())
 
@@ -275,26 +287,28 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, lr_
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
                 if config.TRAIN.CLIP_GRAD:
-                    grad_norm = torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), config.TRAIN.CLIP_GRAD)
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        amp.master_params(optimizer), config.TRAIN.CLIP_GRAD)
                 else:
                     grad_norm = get_grad_norm(amp.master_params(optimizer))
             else:
                 loss.backward()
                 if config.TRAIN.CLIP_GRAD:
-                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.TRAIN.CLIP_GRAD)
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), config.TRAIN.CLIP_GRAD)
                 else:
                     grad_norm = get_grad_norm(model.parameters())
             optimizer.step()
             lr_scheduler.step_update(epoch * num_steps + idx)
-        
+
         torch.cuda.synchronize()
-        
+
         loss_meter.update(loss.item(), targets.size(0))
         norm_meter.update(grad_norm)
         end = time.time()
         batch_time.update(end - start)
         start = end
-        
+
         if idx % config.PRINT_FREQ == 0:
             lr = optimizer.param_groups[-1]['lr']
             memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
@@ -309,7 +323,8 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, lr_
             )
     epoch_end = time.time()
     epoch_time = epoch_end - epoch_start
-    logger.info(f"EPOCH {epoch} traning takes {datetime.timedelta(seconds=int(epoch_time))}")
+    logger.info(
+        f"EPOCH {epoch} traning takes {datetime.timedelta(seconds=int(epoch_time))}")
 
 
 # gathers tensors from all GPUs and concatenates them
@@ -322,20 +337,22 @@ def gather_tensor(tensor):
 
 # Warning: probs/targets (322-323) stay on local GPU so, currently AUROC here is per local GPU, not global AUROC
 # measure how well the fine tuned chexpert model is doing
-@torch.no_grad() # for efficiency, validate doesnt track gradients since there is no back propagation
+# for efficiency, validate doesnt track gradients since there is no back propagation
+@torch.no_grad()
 def validate(config, data_loader, model):
     # BCEWithLogitsLoss combines sigmoid and binary cross entropy
     # (expects raw logits from the model)
-    criterion = nn.BCEWithLogitsLoss() # loss used for multi label classification in checpert
+    # loss used for multi label classification in checpert
+    criterion = nn.BCEWithLogitsLoss()
     model.eval()
-    
+
     # batch_time.val stores time for current batch
     # batch_time.avg stores average time so far
     batch_time = AverageMeter()
     # loss_meter.val stores the current reduced loss
     # loss_meter.avg stores the average validation loss across all samples
     loss_meter = AverageMeter()
-    
+
     all_probs = []      # collect probabilities/predictions from all batches
     all_targets = []    # collect true labels from all batches
 
@@ -351,13 +368,13 @@ def validate(config, data_loader, model):
         logits = model(images)
         # our loss, compares the predicted logits by the model with the true multilabel targets
         loss = criterion(logits, targets)
-        
+
         # if validation is running on multiple GPUs, each GPU computes its own batch loss
         # reduced_loss is the average loss across all GPUs for a batch
         reduced_loss = reduce_tensor(loss)
         # update loss average (weighted by number of samples in the batch)
         loss_meter.update(reduced_loss.item(), targets.size(0))
-        
+
         # convert logits to probabilities (between 0 and 1, inclusive) for AUROC
         probs = torch.sigmoid(logits)
         probs = gather_tensor(probs)
@@ -367,12 +384,14 @@ def validate(config, data_loader, model):
         if dist.get_rank() == 0:
             all_probs.append(probs.cpu())
             all_targets.append(targets.cpu())
-        
+
         end = time.time()
         batch_time.update(end - start)
         start = end
-        if idx % config.PRINT_FREQ == 0:                                            # logs every "PRINT_FREQ" batches
-            memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)     # converts max allocated Bytes to MB
+        # logs every "PRINT_FREQ" batches
+        if idx % config.PRINT_FREQ == 0:
+            # converts max allocated Bytes to MB
+            memory_used = torch.cuda.max_memory_allocated() / (1024.0 * 1024.0)
             logger.info(
                 f'Test: [{idx}/{len(data_loader)}]\t'
                 f'Time {batch_time.val:.3f} (avg {batch_time.avg:.3f})\t'
@@ -385,12 +404,14 @@ def validate(config, data_loader, model):
     # so now we have one big np array of probabilities, and one of true labels
     all_probs = torch.cat(all_probs, dim=0).numpy()
     all_targets = torch.cat(all_targets, dim=0).numpy()
-    
+
     per_class_auc = []                      # store AUROC for each pathology
     for c in range(all_targets.shape[1]):   # loop over all 14 classes
         # extract one class (one column == one pathology) at a time
-        y_true = all_targets[:, c]      # true label for that class/pathology across the whole set
-        y_score = all_probs[:, c]       # predicted probabilities for that class across the whole set
+        # true label for that class/pathology across the whole set
+        y_true = all_targets[:, c]
+        # predicted probabilities for that class across the whole set
+        y_score = all_probs[:, c]
         # roc_auc_score needs both positive and negative examples, otherwise just stores nan for that class
         if len(np.unique(y_true)) < 2:
             per_class_auc.append(float("nan"))
@@ -403,7 +424,7 @@ def validate(config, data_loader, model):
     # averages the AUROC per class (ignores class with nan)
     # mean AUROC = overall model performance across all diseases (high means model is good overall)
     mean_auc = float(np.nanmean(per_class_auc))
-    
+
     logger.info(f'Mean AUROC {mean_auc:.4f}')
     logger.info(f'Per-class AUROC {per_class_auc}')
 
@@ -427,7 +448,8 @@ def throughput(data_loader, model, logger):
             model(images)
         torch.cuda.synchronize()
         tic2 = time.time()
-        logger.info(f"batch_size {batch_size} throughput {30 * batch_size / (tic2 - tic1)}")
+        logger.info(
+            f"batch_size {batch_size} throughput {30 * batch_size / (tic2 - tic1)}")
         return
 
 
@@ -445,46 +467,53 @@ if __name__ == '__main__':
     else:
         rank = -1
         world_size = -1
-        
+
     # Read LOCAL_RANK from the environment (populated by torchrun)
     if 'LOCAL_RANK' in os.environ:
         local_rank = int(os.environ['LOCAL_RANK'])
         config.defrost()
         config.LOCAL_RANK = local_rank
         config.freeze()
-        
-    torch.cuda.set_device(config.LOCAL_RANK)        # choose the GPU to use (LOCAL_RANK = 1 -> GPU 1)
+
+    # choose the GPU to use (LOCAL_RANK = 1 -> GPU 1)
+    torch.cuda.set_device(config.LOCAL_RANK)
     # helps distributed GPUs talk to each other (we will probably just use one GPU anyway)
     torch.distributed.init_process_group(
         backend='nccl',
         init_method='env://',
         world_size=world_size,
         rank=rank
-        )
-    torch.distributed.barrier()                     # wait here until all GPUs/processes are synchronized
+    )
+    # wait here until all GPUs/processes are synchronized
+    torch.distributed.barrier()
 
     # set random seeds
-    seed = config.SEED + dist.get_rank() # dist.get_rank() so seeds are not identical among GPUs
+    # dist.get_rank() so seeds are not identical among GPUs
+    seed = config.SEED + dist.get_rank()
     torch.manual_seed(seed)
     np.random.seed(seed)
     cudnn.benchmark = True
 
     # linear scale the learning rate according to total batch size, may not be optimal
     # 512 is the reference batch size original paper tuned the learning rate for
-    original_reference_batch_size = 512.0 # not using (from original paper, trained on imagenet)
+    # not using (from original paper, trained on imagenet)
+    original_reference_batch_size = 512.0
     # using 32 since chexpert is significantly smaller than imagenet (original paper dataset)
     # can change depending on the learning rate
     reference_batch_size = 32.0
-    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
-    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
-    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
-    
+    linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * \
+        dist.get_world_size() / reference_batch_size
+    linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * \
+        config.DATA.BATCH_SIZE * dist.get_world_size() / reference_batch_size
+    linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * \
+        dist.get_world_size() / reference_batch_size
+
     # gradient accumulation also need to scale the learning rate
     if config.TRAIN.ACCUMULATION_STEPS > 1:
         linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS
         linear_scaled_warmup_lr = linear_scaled_warmup_lr * config.TRAIN.ACCUMULATION_STEPS
         linear_scaled_min_lr = linear_scaled_min_lr * config.TRAIN.ACCUMULATION_STEPS
-    
+
     # update the LR values
     config.defrost()
     config.TRAIN.BASE_LR = linear_scaled_lr
@@ -493,9 +522,10 @@ if __name__ == '__main__':
     config.freeze()
 
     os.makedirs(config.OUTPUT, exist_ok=True)
-    logger = create_logger(output_dir=config.OUTPUT, dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
+    logger = create_logger(output_dir=config.OUTPUT,
+                           dist_rank=dist.get_rank(), name=f"{config.MODEL.NAME}")
 
-    if dist.get_rank() == 0: # to avoid duplicates from other GPUs if they exist
+    if dist.get_rank() == 0:  # to avoid duplicates from other GPUs if they exist
         path = os.path.join(config.OUTPUT, "config.json")
         with open(path, "w") as f:
             f.write(config.dump())
