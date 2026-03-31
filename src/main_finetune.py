@@ -381,9 +381,8 @@ def validate(config, data_loader, model):
         targets = gather_tensor(targets)
         # store predicted probabilities and true labels for every batch
         # move back to CPU (for AUROC/scikit-learn)
-        if dist.get_rank() == 0:
-            all_probs.append(probs.cpu())
-            all_targets.append(targets.cpu())
+        all_probs.append(probs.cpu())
+        all_targets.append(targets.cpu())
 
         end = time.time()
         batch_time.update(end - start)
