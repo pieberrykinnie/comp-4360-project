@@ -2,12 +2,13 @@ import re
 import csv
 import argparse
 from pathlib import Path
+from collections import defaultdict
 
 import matplotlib.pyplot as plt
 
-# this is the function that does the regex to parse the log file
-# and it returns a list of dictionaries, where each dictionary corresponds to one log line with all the extracted metrics.
-def parse_log_file(log_path):
+
+def parse_log_file(log_path, rank_name):
+
     train_pattern = re.compile(
         r"Train:\s+\[(\d+)/(\d+)\]\[(\d+)/(\d+)\]\s+"
         r"eta\s+\S+\s+"
@@ -32,21 +33,18 @@ def parse_log_file(log_path):
             steps_per_epoch = int(match.group(4))
 
             lr = float(match.group(5))
-
             time_val = float(match.group(6))
             time_avg = float(match.group(7))
-
             loss_val = float(match.group(8))
             loss_avg = float(match.group(9))
-
             grad_val = float(match.group(10))
             grad_avg = float(match.group(11))
-
             mem_mb = int(match.group(12))
 
             global_step = epoch * steps_per_epoch + step
 
             records.append({
+                "rank": rank_name,
                 "epoch": epoch,
                 "total_epochs": total_epochs,
                 "step": step,
@@ -64,15 +62,47 @@ def parse_log_file(log_path):
 
     return records
 
-#this function takes the list of records (dictionaries) and builds two lists: one for epochs and one for the corresponding average losses.
-#It uses a dictionary to keep track of the last loss value for each epoch, ensuring that if there are multiple log lines for the same epoch, only the last one is used for plotting.
-def build_epoch_summary(records):
 
+def combine_records(records):
+
+    grouped = defaultdict(list)
+
+    for row in records:
+        key = (row["epoch"], row["step"])
+        grouped[key].append(row)
+
+    combined = []
+
+    for key in sorted(grouped.keys()):
+        rows = grouped[key]
+
+        combined_row = {
+            "epoch": rows[0]["epoch"],
+            "total_epochs": rows[0]["total_epochs"],
+            "step": rows[0]["step"],
+            "steps_per_epoch": rows[0]["steps_per_epoch"],
+            "global_step": rows[0]["global_step"],
+            "lr": sum(r["lr"] for r in rows) / len(rows),
+            "time_val": sum(r["time_val"] for r in rows) / len(rows),
+            "time_avg": sum(r["time_avg"] for r in rows) / len(rows),
+            "loss_val": sum(r["loss_val"] for r in rows) / len(rows),
+            "loss_avg": sum(r["loss_avg"] for r in rows) / len(rows),
+            "grad_val": sum(r["grad_val"] for r in rows) / len(rows),
+            "grad_avg": sum(r["grad_avg"] for r in rows) / len(rows),
+            "mem_mb": sum(r["mem_mb"] for r in rows) / len(rows),
+            "num_ranks_used": len(rows),
+        }
+
+        combined.append(combined_row)
+
+    return combined
+
+
+def build_epoch_summary(records):
     epoch_to_last_loss = {}
 
     for row in records:
-        epoch = row["epoch"]
-        epoch_to_last_loss[epoch] = row["loss_avg"]
+        epoch_to_last_loss[row["epoch"]] = row["loss_avg"]
 
     epochs = sorted(epoch_to_last_loss.keys())
     losses = [epoch_to_last_loss[e] for e in epochs]
@@ -81,6 +111,9 @@ def build_epoch_summary(records):
 
 
 def save_csv(records, output_csv):
+    if not records:
+        return
+
     fieldnames = list(records[0].keys())
 
     with open(output_csv, "w", newline="", encoding="utf-8") as f:
@@ -88,9 +121,7 @@ def save_csv(records, output_csv):
         writer.writeheader()
         writer.writerows(records)
 
-#This function takes the epochs and their corresponding average losses and creates a line plot.
-#  The x-axis represents the epoch number, while the y-axis represents the average training loss.
-#  The plot is saved as a PNG file in the specified output path.
+
 def plot_loss_vs_epoch(epochs, losses, output_path):
     plt.figure(figsize=(8, 5))
     plt.plot(epochs, losses, marker="o")
@@ -102,9 +133,7 @@ def plot_loss_vs_epoch(epochs, losses, output_path):
     plt.savefig(output_path, dpi=300)
     plt.close()
 
-#this function creates a line plot of the learning rate against the global step.
-#  The x-axis represents the global step, while the y-axis represents the learning rate. 
-# The plot is saved as a PNG file in the specified output path.
+
 def plot_lr_vs_global_step(records, output_path):
     x = [row["global_step"] for row in records]
     y = [row["lr"] for row in records]
@@ -122,9 +151,6 @@ def plot_lr_vs_global_step(records, output_path):
 
 def plot_grad_norm_vs_global_step(records, output_path):
     x = [row["global_step"] for row in records]
-
-    # Using grad_avg makes the plot smoother and easier to read.
-    # If you want the raw version, change grad_avg -> grad_val.
     y = [row["grad_avg"] for row in records]
 
     plt.figure(figsize=(8, 5))
@@ -139,46 +165,74 @@ def plot_grad_norm_vs_global_step(records, output_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot graphs from SimMIM pretraining log.")
-    parser.add_argument(
-        "--log",
-        type=str,
-        default="log_rank0.txt",
-        help="Path to the log file"
+    parser = argparse.ArgumentParser(
+        description="Plot combined graphs from SimMIM rank0 and rank1 logs."
     )
+
+    parser.add_argument(
+        "--log0",
+        type=str,
+        default=r"output\simmim_pretrain\simmim_pretrain__vit_base__img224__100ep\log_rank0.txt",
+        help="Path to log_rank0.txt"
+    )
+
+    parser.add_argument(
+        "--log1",
+        type=str,
+        default=r"output\simmim_pretrain\simmim_pretrain__vit_base__img224__100ep\log_rank1.txt",
+        help="Path to log_rank1.txt"
+    )
+
     parser.add_argument(
         "--outdir",
         type=str,
-        default="plots",
+        default=r"output\simmim_pretrain\simmim_pretrain__vit_base__img224__100ep\plots",
         help="Folder where the plots will be saved"
     )
+
     args = parser.parse_args()
 
-    log_path = Path(args.log)
+    log0_path = Path(args.log0)
+    log1_path = Path(args.log1)
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    records = parse_log_file(log_path)
+    all_records = []
 
-    if not records:
-        print("No training records were found in the log file.")
+    if log0_path.exists():
+        all_records.extend(parse_log_file(log0_path, "rank0"))
+    else:
+        print(f"Could not find: {log0_path}")
+
+    if log1_path.exists():
+        all_records.extend(parse_log_file(log1_path, "rank1"))
+    else:
+        print(f"Could not find: {log1_path}")
+
+    if not all_records:
+        print("No training records were found in either log file.")
         return
 
-    # Save extracted data too, just in case you want it for Excel later
-    save_csv(records, outdir / "extracted_metrics.csv")
+    combined_records = combine_records(all_records)
 
-    epochs, epoch_losses = build_epoch_summary(records)
+    if not combined_records:
+        print("No combined training records could be created.")
+        return
+
+    save_csv(combined_records, outdir / "combined_extracted_metrics.csv")
+
+    epochs, epoch_losses = build_epoch_summary(combined_records)
 
     plot_loss_vs_epoch(epochs, epoch_losses, outdir / "avg_training_loss_vs_epoch.png")
-    plot_lr_vs_global_step(records, outdir / "learning_rate_vs_global_step.png")
-    plot_grad_norm_vs_global_step(records, outdir / "grad_norm_vs_global_step.png")
+    plot_lr_vs_global_step(combined_records, outdir / "learning_rate_vs_global_step.png")
+    plot_grad_norm_vs_global_step(combined_records, outdir / "grad_norm_vs_global_step.png")
 
-    print(f"Done. Plots saved in: {outdir}")
+    print(f"Done. Combined plots saved in: {outdir}")
     print("Files created:")
     print("- avg_training_loss_vs_epoch.png")
     print("- learning_rate_vs_global_step.png")
     print("- grad_norm_vs_global_step.png")
-    print("- extracted_metrics.csv")
+    print("- combined_extracted_metrics.csv")
 
 
 if __name__ == "__main__":
