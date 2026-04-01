@@ -3,6 +3,7 @@ MODEL:
   NAME: simmim_pretrain
   DROP_PATH_RATE: 0.1
   VIT:
+    PATCH_SIZE: 4
     EMBED_DIM: 768
     DEPTH: 12
     NUM_HEADS: 12
