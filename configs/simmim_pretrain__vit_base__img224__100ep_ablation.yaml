@@ -1,6 +1,6 @@
 MODEL:
   TYPE: vit
-  NAME: simmim_pretrain
+  NAME: simmim_pretrain_ablation
   DROP_PATH_RATE: 0.1
   VIT:
     EMBED_DIM: 768
@@ -13,8 +13,8 @@ MODEL:
 DATA:
   BATCH_SIZE: 116
   IMG_SIZE: 224
-  MASK_PATCH_SIZE: 64
-  MASK_RATIO: 0.6
+  MASK_PATCH_SIZE: 32
+  MASK_RATIO: 0.1
   CSV_PATH: "data/CheXpert-v1.0-small/train.csv"
   IMG_ROOT: "data/"
 TRAIN:
@@ -30,4 +30,4 @@ TRAIN:
 AMP_OPT_LEVEL: "O1"
 PRINT_FREQ: 100
 SAVE_FREQ: 5
-TAG: simmim_pretrain__vit_base__img224__100ep
+TAG: simmim_pretrain__vit_base__img224__100ep_ablation
