@@ -3,7 +3,6 @@ MODEL:
   NAME: simmim_pretrain
   DROP_PATH_RATE: 0.1
   VIT:
-    PATCH_SIZE: 4
     EMBED_DIM: 768
     DEPTH: 12
     NUM_HEADS: 12
@@ -14,7 +13,7 @@ MODEL:
 DATA:
   BATCH_SIZE: 116
   IMG_SIZE: 224
-  MASK_PATCH_SIZE: 4
+  MASK_PATCH_SIZE: 64
   MASK_RATIO: 0.6
   CSV_PATH: "data/CheXpert-v1.0-small/train.csv"
   IMG_ROOT: "data/"
