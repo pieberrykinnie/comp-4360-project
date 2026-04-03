@@ -350,7 +350,7 @@ def _update_config_from_args(config: Config, args: Namespace) -> None:
         )
 
     def _check_args(name: str) -> bool:
-        return getattr(args, name, None) is not None
+        return getattr(args, name)
 
     # Merge from specific arguments
     if _check_args("batch_size"):
