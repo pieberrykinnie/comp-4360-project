@@ -1,0 +1,110 @@
+BASE:
+- ''
+DATA:
+  BATCH_SIZE: 116
+  DATA_PATH: ''
+  CSV_PATH: data/CheXpert-v1.0-small/train.csv
+  IMG_ROOT: data/
+  TRAIN_CSV_PATH: ''
+  VAL_CSV_PATH: ''
+  UNCERTAINTY_POLICY: zeros
+  FRONTAL_ONLY: true
+  DATASET: imagenet
+  IMG_SIZE: 224
+  INTERPOLATION: bicubic
+  PIN_MEMORY: true
+  NUM_WORKERS: 8
+  MASK_PATCH_SIZE: 32
+  MASK_RATIO: 0.1
+MODEL:
+  TYPE: vit
+  NAME: simmim_pretrain_ablation
+  RESUME: ''
+  NUM_CLASSES: 1000
+  DROP_RATE: 0.0
+  DROP_PATH_RATE: 0.1
+  LABEL_SMOOTHING: 0.1
+  SWIN:
+    PATCH_SIZE: 4
+    IN_CHANS: 1
+    EMBED_DIM: 96
+    DEPTHS:
+    - 2
+    - 2
+    - 6
+    - 2
+    NUM_HEADS:
+    - 3
+    - 6
+    - 12
+    - 24
+    WINDOW_SIZE: 7
+    MLP_RATIO: 4.0
+    QKV_BIAS: true
+    QK_SCALE: null
+    APE: false
+    PATCH_NORM: true
+  VIT:
+    PATCH_SIZE: 16
+    IN_CHANS: 1
+    EMBED_DIM: 768
+    DEPTH: 12
+    NUM_HEADS: 12
+    MLP_RATIO: 4
+    QKV_BIAS: true
+    INIT_VALUES: 0.1
+    USE_APE: false
+    USE_RPB: false
+    USE_SHARED_RPB: true
+    USE_MEAN_POOLING: false
+TRAIN:
+  START_EPOCH: 0
+  EPOCHS: 100
+  WARMUP_EPOCHS: 10
+  WEIGHT_DECAY: 0.05
+  BASE_LR: 0.0007250000000000001
+  WARMUP_LR: 3.625e-06
+  MIN_LR: 3.625e-05
+  CLIP_GRAD: 5.0
+  AUTO_RESUME: true
+  ACCUMULATION_STEPS: 0
+  USE_CHECKPOINT: true
+  LR_SCHEDULER:
+    NAME: multistep
+    DECAY_EPOCHS: 30
+    DECAY_RATE: 0.1
+    GAMMA: 0.1
+    MULTISTEPS:
+    - 700
+  OPTIMIZER:
+    NAME: adamw
+    EPS: 1.0e-08
+    BETAS:
+    - 0.9
+    - 0.999
+    MOMENTUM: 0.9
+  LAYER_DECAY: 1.0
+AUG:
+  COLOR_JITTER: 0.4
+  AUTO_AUGMENT: rand-m9-mstd0.5-inc1
+  REPROB: 0.25
+  REMODE: pixel
+  RECOUNT: 1
+  MIXUP: 0.8
+  CUTMIX: 1.0
+  CUTMIX_MINMAX: null
+  MIXUP_PROB: 1.0
+  MIXUP_SWITCH_PROB: 0.5
+  MIXUP_MODE: batch
+TEST:
+  CROP: true
+AMP_OPT_LEVEL: O0
+OUTPUT: output/simmim_pretrain_ablation/simmim_pretrain__vit_base__img224__100ep_ablation
+TAG: simmim_pretrain__vit_base__img224__100ep_ablation
+SAVE_FREQ: 5
+PRINT_FREQ: 100
+SEED: 0
+EVAL_MODE: false
+THROUGHPUT_MODE: false
+LOCAL_RANK: 0
+PRETRAINED: ''
