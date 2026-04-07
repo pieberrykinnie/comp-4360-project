@@ -38,7 +38,7 @@ def parse_log(log_path):
             steps_per_epoch = int(match.group(4))
             lr = float(match.group(5))
             loss_avg = float(match.group(7))
-            grad_avg = float(match.group(8))
+            grad_current = float(match.group(8))
 
             global_step = epoch * steps_per_epoch + step
 
@@ -50,7 +50,7 @@ def parse_log(log_path):
                     "global_step": global_step,
                     "lr": lr,
                     "loss_avg": loss_avg,
-                    "grad_avg": grad_avg,
+                    "grad_current": grad_current,
                 }
             )
 
@@ -89,7 +89,7 @@ def combine_rank_logs(rank0_path, rank1_path):
 
     step_groups = defaultdict(list)
     for p in all_points:
-        step_groups[p["global_step"]].append(p["grad_avg"])
+        step_groups[p["global_step"]].append(p["grad_current"])
 
     global_steps = sorted(step_groups.keys())
     grad_norms = [np.mean(step_groups[s]) for s in global_steps]
