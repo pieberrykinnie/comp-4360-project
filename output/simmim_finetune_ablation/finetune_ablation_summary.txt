@@ -1,0 +1,6 @@
+Fine-Tuning Baseline vs Ablation Summary
+--------------------------------------
+Baseline best mean AUROC: 0.6855
+Ablation best mean AUROC: 0.8009
+Baseline best validation loss: 0.4785
+Ablation best validation loss: 0.4245
