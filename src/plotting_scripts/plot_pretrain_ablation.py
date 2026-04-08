@@ -148,7 +148,6 @@ def plot_loss_vs_epoch(baseline, ablation, outdir):
 
 
 def plot_grad_norm_vs_step(baseline, ablation, outdir, smooth_window, clip_grad=None):
-    # Optionally simulate gradient clipping before smoothing
     base_norms = baseline["grad_norms"]
     abl_norms = ablation["grad_norms"]
     if clip_grad is not None:

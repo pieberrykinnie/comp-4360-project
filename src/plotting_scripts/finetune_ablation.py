@@ -7,15 +7,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-# Example:
-# Train: [0/100][800/823] ... loss 0.3597 (0.3714) ...
+
 TRAIN_LINE_RE = re.compile(
     r"Train:\s+\[(\d+)/(\d+)\]\[(\d+)/(\d+)\].*?"
     r"loss\s+([0-9eE+\-\.]+)\s+\(\s*([0-9eE+\-\.]+)\)"
 )
 
-# Example:
-# Validation - Epoch 0: mean_auc: 0.6154 | loss: 0.4807
+
 VAL_LINE_RE = re.compile(
     r"Validation\s*-\s*Epoch\s+(\d+):\s*mean_auc:\s*([0-9eE+\-\.]+)\s*\|\s*loss:\s*([0-9eE+\-\.]+)"
 )
@@ -59,7 +57,6 @@ def combine_rank_logs(rank0_path, rank1_path):
     rank0_train, rank0_val = parse_log_file(rank0_path)
     rank1_train, rank1_val = parse_log_file(rank1_path)
 
-    # ---- training loss per epoch ----
     def get_last_train_loss_per_epoch(points):
         epoch_to_last = {}
         for p in points:
@@ -82,7 +79,6 @@ def combine_rank_logs(rank0_path, rank1_path):
             values.append(rank1_train_loss[epoch])
         train_losses.append(np.mean(values))
 
-    # ---- validation metrics per epoch ----
     val_groups = defaultdict(list)
 
     for p in rank0_val:
