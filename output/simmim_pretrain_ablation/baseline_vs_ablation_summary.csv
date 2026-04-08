@@ -1,0 +1,3 @@
+run,mask_ratio,final_epoch_loss,mean_last_5_epochs_loss
+baseline,0.6,0.1497,0.14996
+ablation,0.1,0.11055000000000001,0.11058000000000001
