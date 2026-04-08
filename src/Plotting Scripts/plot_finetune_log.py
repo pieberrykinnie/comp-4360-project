@@ -6,12 +6,9 @@ from collections import defaultdict
 
 import matplotlib.pyplot as plt
 
+# this is the func that help with parsing the log files and extracting the relevant metrics for plotting. 
 
-def parse_log_file(log_path, rank_name):
-    """
-    Read one fine-tuning log file and extract training records.
-    """
-
+def parse_train_lines(log_path, rank_name):
     train_pattern = re.compile(
         r"Train:\s+\[(\d+)/(\d+)\]\[(\d+)/(\d+)\]\s+"
         r"eta\s+\S+\s+"
@@ -65,8 +62,36 @@ def parse_log_file(log_path, rank_name):
 
     return records
 
-# this func combines records from multiple ranks by averaging the values for the same epoch and step.
-def combine_records(records):
+# this func is responsible for parsing the validation lines from the log file and extracting the mean AUC and validation loss for each epoch. 
+
+def parse_validation_lines(log_path):
+
+    val_pattern = re.compile(
+        r"Validation - Epoch\s+(\d+):\s+mean_auc:\s+([0-9.]+)\s+\|\s+loss:\s+([0-9.]+)"
+    )
+
+    val_records = {}
+
+    with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            match = val_pattern.search(line)
+            if not match:
+                continue
+
+            epoch = int(match.group(1))
+            mean_auc = float(match.group(2))
+            val_loss = float(match.group(3))
+
+            val_records[epoch] = {
+                "epoch": epoch,
+                "mean_auc": mean_auc,
+                "val_loss": val_loss,
+            }
+
+    return val_records
+
+
+def combine_train_records(records):
 
     grouped = defaultdict(list)
 
@@ -100,10 +125,8 @@ def combine_records(records):
 
     return combined
 
-# i am tring to build a summary of the average training loss at the end of each epoch. 
-# i  combine records and creates two lists: one for epochs and one for the corresponding average losses. 
-# it uses a dictionary to keep track of the last loss value for each epoch, then sorts the epochs and extracts the losses in order.
-def build_epoch_summary(records):
+
+def build_training_loss_by_epoch(records):
     epoch_to_last_loss = {}
 
     for row in records:
@@ -113,6 +136,14 @@ def build_epoch_summary(records):
     losses = [epoch_to_last_loss[e] for e in epochs]
 
     return epochs, losses
+
+
+def build_validation_lists(val_records):
+    epochs = sorted(val_records.keys())
+    val_losses = [val_records[e]["val_loss"] for e in epochs]
+    mean_aucs = [val_records[e]["mean_auc"] for e in epochs]
+
+    return epochs, val_losses, mean_aucs
 
 
 def save_csv(records, output_csv):
@@ -126,45 +157,51 @@ def save_csv(records, output_csv):
         writer.writeheader()
         writer.writerows(records)
 
-# i am ploting the avg training loss against epochs.
-#  it creates a line plot with epochs on the x-axis and average training loss on the y-axis, 
-def plot_loss_vs_epoch(epochs, losses, output_path):
+
+def save_validation_csv(val_records, output_csv):
+    rows = [val_records[e] for e in sorted(val_records.keys())]
+
+    if not rows:
+        return
+
+    fieldnames = list(rows[0].keys())
+
+    with open(output_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def plot_training_loss(epochs, losses, output_path):
     plt.figure(figsize=(8, 5))
     plt.plot(epochs, losses, marker="o")
     plt.xlabel("Epoch")
-    plt.ylabel("Average Training Loss")
-    plt.title("Average Training Loss vs Epoch")
+    plt.ylabel("Training Loss")
+    plt.title("Training Loss vs Epoch")
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
     plt.close()
 
-# this func plots the learning rate against the global step
-# it should create a line plit with global step on they x acis and learning rate on the y axis.
-def plot_lr_vs_global_step(records, output_path):
-    x = [row["global_step"] for row in records]
-    y = [row["lr"] for row in records]
 
+def plot_validation_loss(epochs, losses, output_path):
     plt.figure(figsize=(8, 5))
-    plt.plot(x, y)
-    plt.xlabel("Global Step")
-    plt.ylabel("Learning Rate")
-    plt.title("Learning Rate vs Global Step")
+    plt.plot(epochs, losses, marker="o")
+    plt.xlabel("Epoch")
+    plt.ylabel("Validation Loss")
+    plt.title("Validation Loss vs Epoch")
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
     plt.close()
 
-# this func plots the gradient norm against the global step.
-def plot_grad_norm_vs_global_step(records, output_path):
-    x = [row["global_step"] for row in records]
-    y = [row["grad_avg"] for row in records]
 
+def plot_mean_auroc(epochs, aucs, output_path):
     plt.figure(figsize=(8, 5))
-    plt.plot(x, y)
-    plt.xlabel("Global Step")
-    plt.ylabel("Gradient Norm")
-    plt.title("Gradient Norm vs Global Step")
+    plt.plot(epochs, aucs, marker="o")
+    plt.xlabel("Epoch")
+    plt.ylabel("Mean AUROC")
+    plt.title("Mean AUROC vs Epoch")
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
@@ -173,20 +210,20 @@ def plot_grad_norm_vs_global_step(records, output_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot graphs from fine-tuning logs."
+        description="Plot fine-tuning graphs from rank0 and rank1 logs."
     )
 
     parser.add_argument(
         "--log0",
         type=str,
-        default=r"output/simmim_finetune\simmim_finetune__vit_base__img224__100ep\log_rank0.txt",
+        default=r"output\simmim_finetune\simmim_finetune__vit_base__img224__100ep\log_rank0.txt",
         help="Path to log_rank0.txt"
     )
 
     parser.add_argument(
         "--log1",
         type=str,
-        default=r"output/simmim_finetune\simmim_finetune__vit_base__img224__100ep\log_rank1.txt",
+        default=r"output\simmim_finetune\simmim_finetune__vit_base__img224__100ep\log_rank1.txt",
         help="Path to log_rank1.txt"
     )
 
@@ -194,7 +231,7 @@ def main():
         "--outdir",
         type=str,
         default=r"output/simmim_finetune\simmim_finetune__vit_base__img224__100ep\plots",
-        help="Folder where the plots will be saved"
+        help="Folder where plots will be saved"
     )
 
     args = parser.parse_args()
@@ -204,42 +241,51 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    all_records = []
+    all_train_records = []
 
     if log0_path.exists():
-        all_records.extend(parse_log_file(log0_path, "rank0"))
+        all_train_records.extend(parse_train_lines(log0_path, "rank0"))
     else:
         print(f"Could not find: {log0_path}")
 
     if log1_path.exists():
-        all_records.extend(parse_log_file(log1_path, "rank1"))
+        all_train_records.extend(parse_train_lines(log1_path, "rank1"))
     else:
         print(f"Could not find: {log1_path}")
 
-    if not all_records:
-        print("No training records were found in either log file.")
+    if not all_train_records:
+        print("No training records were found.")
         return
 
-    combined_records = combine_records(all_records)
+    combined_train_records = combine_train_records(all_train_records)
 
-    if not combined_records:
-        print("No combined records could be created.")
+
+    if log0_path.exists():
+        validation_records = parse_validation_lines(log0_path)
+    else:
+        validation_records = {}
+
+    if not validation_records:
+        print("No validation records were found in log_rank0.txt.")
         return
 
-    save_csv(combined_records, outdir / "combined_finetune_metrics.csv")
+    save_csv(combined_train_records, outdir / "combined_finetune_train_metrics.csv")
+    save_validation_csv(validation_records, outdir / "finetune_validation_metrics.csv")
 
-    epochs, epoch_losses = build_epoch_summary(combined_records)
+    train_epochs, train_losses = build_training_loss_by_epoch(combined_train_records)
+    val_epochs, val_losses, mean_aucs = build_validation_lists(validation_records)
 
-    plot_loss_vs_epoch(epochs, epoch_losses, outdir / "avg_training_loss_vs_epoch.png")
-    plot_lr_vs_global_step(combined_records, outdir / "learning_rate_vs_global_step.png")
-    plot_grad_norm_vs_global_step(combined_records, outdir / "grad_norm_vs_global_step.png")
+    plot_training_loss(train_epochs, train_losses, outdir / "training_loss_vs_epoch.png")
+    plot_validation_loss(val_epochs, val_losses, outdir / "validation_loss_vs_epoch.png")
+    plot_mean_auroc(val_epochs, mean_aucs, outdir / "mean_auroc_vs_epoch.png")
 
     print(f"Done. Plots saved in: {outdir}")
     print("Files created:")
-    print("- avg_training_loss_vs_epoch.png")
-    print("- learning_rate_vs_global_step.png")
-    print("- grad_norm_vs_global_step.png")
-    print("- combined_finetune_metrics.csv")
+    print("- training_loss_vs_epoch.png")
+    print("- validation_loss_vs_epoch.png")
+    print("- mean_auroc_vs_epoch.png")
+    print("- combined_finetune_train_metrics.csv")
+    print("- finetune_validation_metrics.csv")
 
 
 if __name__ == "__main__":
