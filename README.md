@@ -1,6 +1,12 @@
 # comp-4360-project
 
-Repository for the Winter 2026 COMP 4360 - Machine Learning project.
+Codebase for Group 3's Winter 2026 COMP 4360 - Machine Learning project:
+
+* Aamir Sangey
+* Manmilan Singh
+* Peter Vu
+
+The public repository can be found hosted at https://github.com/pieberrykinnie/comp-4360-project.
 
 ## Instructions
 
@@ -75,3 +81,16 @@ If you want to run the evaluation on its own on an existing model checkpoint, ad
 ```bash
 uv run src/main_finetune.py --cfg <config_file> --resume <ckpt_pth> --eval --local-rank 0
 ```
+
+## Development
+
+The repository was built up on 180+ commits, which included reimplementing and adapting [the original SimMIM implementation](https://github.com/microsoft/SimMIM), as well as setting up and sharing results of runs.
+
+While the project structure of this project is nearly identical to the project structure of the original repo, bar that everything is moved to `src/` instead of staying in the root folder, *every* line of code is fully handwritten. Except for `src/models/vision_transformer.py`, every major script in our repository is either much better documented than its original variant, and/or structured differently with different implementation, though the same external interface.
+
+Other major changes in our repository in comparison to the original are as follow:
+
+* **Environment**: The original repository utilizes `conda` on Python 3.7, doesn't version their dependencies in `requirements.txt`, and uses a (now currently outdated) library called `apex` for mixed-precision training. Our repository modernizes this with the `uv` package manager on Python 3.12. This required some not difficult, but tedious, modification to imports and usage of different methods to maintain similar interfaces to the original repository, but with this edit we've theoretically built a more future-proof version of SimMIM than the original repository.
+* **Configuration**: Instead of using `yacs` for configuration, which is relatively outdated, we built a custom `Config` class that works with YAML files, which is used for every configuration object in the codebase.
+* **Data Pipeline**:
+* **Finetune Script**:
