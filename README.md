@@ -97,6 +97,6 @@ Other major changes in our repository in comparison to the original are as follo
   * `__init__.py` - unmodified
   * `build.py` - lightly modified from original (removes Swin)
   * `vision_transformer.py` - lightly modified from original (channel adaptaion)
-  * `simmim.pu` - modified from original for channel adaptation and Swin removal
+  * `simmim.py` - modified from original for channel adaptation and Swin removal
 * **Pretrain Script**: We retained the overall SimMIM pretraining pipeline, but adapted the training script to our project structure and runtime environment by refactoring imports into our `src/` layout, replacing the original and outdated Apex-based mixed precision with native PyTorch AMP/GradScaler, making distributed training optional for single-GPU execution, and adjusting the learning-rate scaling rule for our CheXpert setup.
 * **Finetune Script**: We kept the overall fine-tuning pipeline structure from SimMIM, but substantially adapted it for CheXpert by changing the task from single-label classification to multi-label pathology prediction, replacing cross-entropy with BCEWithLogitsLoss, rewriting validation to compute per-class and mean AUROC instead of top-1/top-5 accuracy, and adjusting training details such as learning-rate scaling and distributed prediction gathering for medical-image evaluation.
