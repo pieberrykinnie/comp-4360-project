@@ -93,7 +93,7 @@ Other major changes in our repository in comparison to the original are as follo
 * **Environment**: The original repository utilizes `conda` on Python 3.7, doesn't version their dependencies in `requirements.txt`, and uses a (now currently outdated) library called `apex` for mixed-precision training. Our repository modernizes this with the `uv` package manager on Python 3.12. This required some not difficult, but tedious, modification to imports and usage of different methods to maintain similar interfaces to the original repository, but with this edit we've theoretically built a more future-proof version of SimMIM than the original repository.
 * **Configuration**: Instead of using `yacs` for configuration, which is relatively outdated, we built a custom `Config` class that works with YAML files, which is used for every configuration object in the codebase.
 * **Data Pipeline**:
-* `data_simmim.py` - while the overall structure is the same, we have wrote an adapted CheXpert-specific version.
+  * `data_simmim.py` - while the overall structure is the same, we have wrote an adapted CheXpert-specific version.
 * **Model**: In the models/ module, we kept most of the original SimMIM ViT implementation, removed unused Swin branches, and adapted the architecture for chest X-rays mainly by supporting single-channel inputs and matching the SimMIM reconstruction head to the encoder input channels instead of hardcoded RGB reconstruction.
   * `__init__.py` - unmodified
   * `build.py` - lightly modified from original (removes Swin)
